@@ -214,18 +214,20 @@ The project includes an end-to-end implementation of **Spring Batch 6 Chunk-Orie
 
 ### Pipeline Architecture Overview
 ```
-JOB: productPipelineJob
+JOBS:
+  ├──► importProductsJob (Dedicated CSV Import Job)
+  │       └──► STEP 1: importCsvToDbStep (Chunk size = 500)
+  │               ItemReader   : FlatFileItemReader (Streams lines from CSV without loading full file into memory)
+  │               ItemProcessor: ProductCsvProcessor (Cleans prices, validates stock, filters corrupted rows)
+  │               ItemWriter   : JdbcBatchItemWriter (Batch-persists 500 products per physical DB transaction)
+  │               Listener     : LoggingChunkListener (Logs transaction boundaries & commit/rollback counts)
   │
-  ├──► STEP 1: importCsvToDbStep (Chunk size = 50)
-  │       ItemReader   : FlatFileItemReader (Streams lines from CSV without loading full file into memory)
-  │       ItemProcessor: ProductCsvProcessor (Cleans prices, validates stock, filters corrupted rows)
-  │       ItemWriter   : JpaItemWriter (Batch-persists 50 products per physical DB transaction)
-  │       Listener     : LoggingChunkListener (Logs transaction boundaries & commit/rollback counts)
-  │
-  └──► STEP 2: exportDbToJsonStep (Chunk size = 50)
-          ItemReader   : JpaPagingItemReader (Paginates PostgreSQL via keyset/ordered cursor)
-          ItemProcessor: ProductJsonProcessor (Enriches DTO with stock status & export timestamps)
-          ItemWriter   : ProductJsonStreamWriter (Appends JSON directly to disk, keeping memory bounded)
+  └──► productPipelineJob (Two-Step Pipeline Job)
+          ├──► STEP 1: importCsvToDbStep (Chunk size = 500)
+          └──► STEP 2: exportDbToJsonStep (Chunk size = 500)
+                  ItemReader   : JdbcCursorItemReader (Streams PostgreSQL via ordered cursor)
+                  ItemProcessor: ProductJsonProcessor (Enriches DTO with stock status & export timestamps)
+                  ItemWriter   : ProductJsonStreamWriter (Appends JSON directly to disk, keeping memory bounded)
 ```
 
 ---
@@ -237,16 +239,16 @@ You can trigger and monitor the batch pipeline through three different interface
 #### Option 1: Via the Web UI Dashboard (Zero Setup)
 1. Open your browser to: **[`http://localhost:8080/web/batch`](http://localhost:8080/web/batch)**
 2. Inspect the current CSV dataset status and file sizes.
-3. Select your input file (default: `data/products_large.csv`) and click **"Run Batch Pipeline"**.
+3. Select your input file (default: `data/products_10k.csv`) and click **"Run Batch Pipeline"**.
 4. The dashboard displays the returned `jobExecutionId`, execution status (`COMPLETED` or `STARTED`), and processing duration.
 
 #### Option 2: Via cURL / Terminal
-Trigger the batch job with custom input and output paths:
+Trigger the batch import or the full pipeline with custom input and output paths:
 ```bash
-# Run with the pre-generated 2,000-item dataset (40 transaction chunks)
-curl -X POST "http://localhost:8080/api/batch/run?inputCsvPath=data/products_large.csv&outputJsonPath=data/exported_products.json"
+# Dedicated CSV Import Job: Streams 10k items into DB in chunks of 500 (20 transactions)
+curl -X POST "http://localhost:8080/api/batch/import?inputCsvPath=data/products_10k.csv"
 
-# Run with the 10,000-item dataset (200 transaction chunks)
+# Full Pipeline Job: Import 10k items into DB (chunks of 500) then export to JSON
 curl -X POST "http://localhost:8080/api/batch/run?inputCsvPath=data/products_10k.csv&outputJsonPath=data/exported_products.json"
 ```
 
@@ -254,18 +256,18 @@ curl -X POST "http://localhost:8080/api/batch/run?inputCsvPath=data/products_10k
 ```json
 {
   "jobExecutionId": 1,
-  "jobName": "productPipelineJob",
+  "jobName": "importProductsJob",
   "status": "COMPLETED",
   "startTime": "2026-11-08T01:27:50Z",
-  "inputCsvPath": "data/products_large.csv",
-  "outputJsonPath": "data/exported_products.json"
+  "inputCsvPath": "data/products_10k.csv",
+  "chunkSize": 500
 }
 ```
 
 #### Option 3: Via Swagger UI
 1. Open **[`http://localhost:8080/swagger-ui.html`](http://localhost:8080/swagger-ui.html)**
 2. Expand the **`Spring Batch Pipeline`** tag.
-3. Execute **`POST /api/batch/run`** with parameters or **`GET /api/batch/status/{jobExecutionId}`**.
+3. Execute **`POST /api/batch/import`** (imports CSV 500 items/chunk), **`POST /api/batch/run`**, or **`GET /api/batch/status/{jobExecutionId}`**.
 
 ---
 
@@ -311,8 +313,8 @@ curl -X GET "http://localhost:8080/api/batch/status/1"
 ### Pre-Generated Datasets & Generating Custom Files
 
 The repository includes pre-built sample datasets:
-* [`data/products_large.csv`](data/products_large.csv): **2,000 products** across 8 categories (~266 KB) $\rightarrow$ **40 transaction chunks**.
-* [`data/products_10k.csv`](data/products_10k.csv): **10,000 products** (~1.3 MB) $\rightarrow$ **200 transaction chunks**.
+* [`data/products_large.csv`](data/products_large.csv): **2,000 products** across 8 categories (~266 KB) $\rightarrow$ **4 transaction chunks of 500**.
+* [`data/products_10k.csv`](data/products_10k.csv): **10,000 products** (~1.3 MB) $\rightarrow$ **20 transaction chunks of 500**.
 
 #### Generate a Custom Dataset on the Fly:
 ```bash
