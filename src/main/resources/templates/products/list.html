@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:th="http://www.thymeleaf.org" xmlns:sec="http://www.thymeleaf.org/extras/spring-security">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Product Catalog - Spring MVC</title>
+    <style>
+        :root {
+            --primary: #2563eb;
+            --primary-dark: #1d4ed8;
+            --bg: #f8fafc;
+            --surface: #ffffff;
+            --text: #0f172a;
+            --muted: #64748b;
+            --border: #e2e8f0;
+        }
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; background: var(--bg); color: var(--text); line-height: 1.6; }
+        header { background: var(--surface); border-bottom: 1px solid var(--border); padding: 1rem 2rem; display: flex; justify-content: space-between; align-items: center; }
+        .logo { font-size: 1.25rem; font-weight: 700; color: var(--primary); text-decoration: none; }
+        nav a { margin-left: 1.25rem; text-decoration: none; color: var(--muted); font-weight: 500; font-size: 0.95rem; }
+        nav a:hover { color: var(--primary); }
+        .container { max-width: 1100px; margin: 2rem auto; padding: 0 1rem; }
+        .top-bar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem; flex-wrap: wrap; gap: 1rem; }
+        .search-form { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+        input[type="text"] { padding: 0.5rem 0.75rem; border: 1px solid var(--border); border-radius: 6px; font-size: 0.95rem; width: 220px; }
+        .btn { display: inline-block; padding: 0.5rem 1rem; border-radius: 6px; font-weight: 600; text-decoration: none; cursor: pointer; border: none; font-size: 0.9rem; }
+        .btn-primary { background: var(--primary); color: white; }
+        .btn-primary:hover { background: var(--primary-dark); }
+        .btn-outline { background: transparent; border: 1px solid var(--border); color: var(--text); }
+        table { width: 100%; border-collapse: collapse; background: var(--surface); border-radius: 8px; overflow: hidden; border: 1px solid var(--border); }
+        th, td { padding: 0.85rem 1rem; text-align: left; border-bottom: 1px solid var(--border); }
+        th { background: #f1f5f9; font-weight: 600; font-size: 0.85rem; text-transform: uppercase; color: var(--muted); }
+        tr:last-child td { border-bottom: none; }
+        .badge { background: #e0f2fe; color: #0369a1; padding: 0.2rem 0.5rem; border-radius: 4px; font-size: 0.75rem; font-weight: 600; }
+        .pagination { display: flex; justify-content: center; gap: 0.5rem; margin-top: 1.5rem; }
+    </style>
+</head>
+<body>
+    <header>
+        <a href="/" class="logo">E-Commerce Store (Spring MVC)</a>
+        <nav style="display: flex; align-items: center; gap: 1rem;">
+            <a href="/">Home</a>
+            <a href="/web/products">Products</a>
+            <a href="/cart" style="font-weight: 600;">
+                Cart (<span th:text="${cart != null ? cart.totalQuantity : 0}">0</span>)
+            </a>
+            <a href="/web/orders" sec:authorize="isAuthenticated()">My Orders</a>
+            <a href="/web/products/new" sec:authorize="hasRole('ADMIN')">Add Product</a>
+            <a href="/swagger-ui.html" target="_blank">Swagger OpenAPI</a>
+
+            <div sec:authorize="!isAuthenticated()" style="display: flex; gap: 0.5rem; margin-left: 0.5rem;">
+                <a href="/login" class="btn btn-outline" style="padding: 0.35rem 0.75rem; font-size: 0.85rem;">Sign In</a>
+                <a href="/register" class="btn btn-primary" style="padding: 0.35rem 0.75rem; font-size: 0.85rem;">Register</a>
+            </div>
+
+            <div sec:authorize="isAuthenticated()" style="display: flex; align-items: center; gap: 0.75rem; margin-left: 0.5rem;">
+                <span style="font-size: 0.9rem; color: var(--muted);">
+                    Hello, <strong style="color: var(--text);" sec:authentication="name">User</strong>
+                </span>
+                <form th:action="@{/logout}" method="post" style="display: inline;">
+                    <button type="submit" class="btn btn-outline" style="padding: 0.3rem 0.65rem; font-size: 0.8rem;">Logout</button>
+                </form>
+            </div>
+        </nav>
+    </header>
+
+    <div class="container">
+        <div class="top-bar">
+            <h2>Product Catalog</h2>
+            <form action="/web/products" method="get" class="search-form">
+                <input type="text" name="search" th:value="${search}" placeholder="Search products...">
+                <input type="text" name="category" th:value="${category}" placeholder="Filter category...">
+                <button type="submit" class="btn btn-primary">Filter</button>
+                <a href="/web/products" class="btn btn-outline">Reset</a>
+                <a href="/web/products/new" class="btn btn-primary">+ Add Product</a>
+            </form>
+        </div>
+
+        <table>
+            <thead>
+                <tr>
+                    <th>ID</th>
+                    <th>Name</th>
+                    <th>Category</th>
+                    <th>Price</th>
+                    <th>Stock</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr th:if="${productPage.content.isEmpty()}">
+                    <td colspan="6" style="text-align: center; color: var(--muted); padding: 2rem;">No products found matching criteria.</td>
+                </tr>
+                <tr th:each="p : ${productPage.content}">
+                    <td th:text="${p.id}">1</td>
+                    <td><strong th:text="${p.name}">Laptop</strong></td>
+                    <td><span class="badge" th:text="${p.category != null ? p.category : 'General'}">Electronics</span></td>
+                    <td th:text="'$' + ${p.price}">$999.99</td>
+                    <td th:text="${p.stockQuantity}">15</td>
+                    <td style="white-space: nowrap;">
+                        <a th:href="@{'/web/products/' + ${p.id}}" class="btn btn-outline" style="padding: 0.3rem 0.6rem; font-size: 0.8rem;">Details</a>
+                        <form th:action="@{/cart/add}" method="post" style="display: inline; margin-left: 0.25rem;">
+                            <input type="hidden" name="productId" th:value="${p.id}" />
+                            <input type="hidden" name="quantity" value="1" />
+                            <button type="submit" class="btn btn-primary" style="padding: 0.3rem 0.6rem; font-size: 0.8rem;">+ Cart</button>
+                        </form>
+                    </td>
+                </tr>
+            </tbody>
+        </table>
+
+        <div class="pagination" th:if="${productPage.totalPages > 1}">
+            <a th:if="${productPage.hasPrevious()}"
+               th:href="@{/web/products(page=${productPage.number - 1}, search=${search}, category=${category})}"
+               class="btn btn-outline">&laquo; Prev</a>
+            <span style="padding: 0.5rem 1rem; color: var(--muted);"
+                  th:text="'Page ' + (${productPage.number} + 1) + ' of ' + ${productPage.totalPages}">Page 1 of 1</span>
+            <a th:if="${productPage.hasNext()}"
+               th:href="@{/web/products(page=${productPage.number + 1}, search=${search}, category=${category})}"
+               class="btn btn-outline">Next &raquo;</a>
+        </div>
+    </div>
+</body>
+</html>
+

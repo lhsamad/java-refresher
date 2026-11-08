@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:th="http://www.thymeleaf.org" xmlns:sec="http://www.thymeleaf.org/extras/spring-security">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>E-Commerce Hub - Spring MVC</title>
+    <style>
+        :root {
+            --primary: #2563eb;
+            --primary-dark: #1d4ed8;
+            --bg: #f8fafc;
+            --surface: #ffffff;
+            --text: #0f172a;
+            --muted: #64748b;
+            --border: #e2e8f0;
+            --accent: #10b981;
+        }
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; background: var(--bg); color: var(--text); line-height: 1.6; }
+        header { background: var(--surface); border-bottom: 1px solid var(--border); padding: 1rem 2rem; display: flex; justify-content: space-between; align-items: center; }
+        .logo { font-size: 1.25rem; font-weight: 700; color: var(--primary); text-decoration: none; }
+        nav a { margin-left: 1.25rem; text-decoration: none; color: var(--muted); font-weight: 500; font-size: 0.95rem; }
+        nav a:hover { color: var(--primary); }
+        .container { max-width: 1100px; margin: 2rem auto; padding: 0 1rem; }
+        .hero { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 2.5rem; margin-bottom: 2rem; text-align: center; }
+        .hero h1 { font-size: 2.25rem; margin-bottom: 0.75rem; color: #1e293b; }
+        .hero p { color: var(--muted); font-size: 1.1rem; max-width: 650px; margin: 0 auto 1.5rem; }
+        .badge-bar { display: flex; justify-content: center; gap: 1rem; margin-bottom: 1.5rem; flex-wrap: wrap; }
+        .badge { background: #eff6ff; color: var(--primary); padding: 0.4rem 0.8rem; border-radius: 9999px; font-size: 0.85rem; font-weight: 600; border: 1px solid #bfdbfe; }
+        .btn { display: inline-block; padding: 0.65rem 1.25rem; border-radius: 8px; font-weight: 600; text-decoration: none; transition: 0.2s; cursor: pointer; border: none; font-size: 0.95rem; }
+        .btn-primary { background: var(--primary); color: white; }
+        .btn-primary:hover { background: var(--primary-dark); }
+        .btn-outline { background: transparent; border: 1px solid var(--border); color: var(--text); }
+        .btn-outline:hover { background: #f1f5f9; }
+        .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 1.5rem; margin-top: 1.5rem; }
+        .card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 1.25rem; display: flex; flex-direction: column; justify-content: space-between; }
+        .card h3 { font-size: 1.15rem; margin-bottom: 0.5rem; }
+        .card p { color: var(--muted); font-size: 0.9rem; margin-bottom: 1rem; flex-grow: 1; }
+        .card-footer { display: flex; justify-content: space-between; align-items: center; border-top: 1px solid var(--border); padding-top: 0.75rem; }
+        .price { font-size: 1.2rem; font-weight: 700; color: #047857; }
+        .stock { font-size: 0.8rem; color: var(--muted); }
+    </style>
+</head>
+<body>
+    <header>
+        <a href="/" class="logo">E-Commerce Store (Spring MVC)</a>
+        <nav style="display: flex; align-items: center; gap: 1rem;">
+            <a href="/web/products">Products</a>
+            <a href="/cart" style="font-weight: 600;">
+                Cart (<span th:text="${cart != null ? cart.totalQuantity : 0}">0</span>)
+            </a>
+            <a href="/web/orders" sec:authorize="isAuthenticated()">My Orders</a>
+            <a href="/web/products/new" sec:authorize="hasRole('ADMIN')">Add Product</a>
+            <a href="/swagger-ui.html" target="_blank">Swagger OpenAPI</a>
+            
+            <!-- When NOT logged in -->
+            <div sec:authorize="!isAuthenticated()" style="display: flex; gap: 0.5rem; margin-left: 0.5rem;">
+                <a href="/login" class="btn btn-outline" style="padding: 0.35rem 0.75rem; font-size: 0.85rem;">Sign In</a>
+                <a href="/register" class="btn btn-primary" style="padding: 0.35rem 0.75rem; font-size: 0.85rem;">Register</a>
+            </div>
+
+            <!-- When logged in -->
+            <div sec:authorize="isAuthenticated()" style="display: flex; align-items: center; gap: 0.75rem; margin-left: 0.5rem;">
+                <span style="font-size: 0.9rem; color: var(--muted);">
+                    Hello, <strong style="color: var(--text);" sec:authentication="name">User</strong>
+                </span>
+                <form th:action="@{/logout}" method="post" style="display: inline;">
+                    <button type="submit" class="btn btn-outline" style="padding: 0.3rem 0.65rem; font-size: 0.8rem;">Logout</button>
+                </form>
+            </div>
+        </nav>
+    </header>
+
+    <div class="container">
+        <div class="hero">
+            <h1>Server-Rendered MVC Layer</h1>
+            <p>Built with Spring Boot MVC and Thymeleaf (pure server-side HTML, zero JavaScript). All REST APIs are also exposed for Angular integration.</p>
+            <div class="badge-bar">
+                <span class="badge">Spring Boot 4.1</span>
+                <span class="badge">PostgreSQL</span>
+                <span class="badge">Thymeleaf MVC</span>
+                <span class="badge">Keycloak OAuth2 / JWT</span>
+                <span class="badge">OpenAPI / Swagger</span>
+            </div>
+            <div>
+                <a href="/web/products" class="btn btn-primary">Browse Catalog</a>
+                <a href="/swagger-ui.html" class="btn btn-outline" target="_blank">Open Swagger UI</a>
+            </div>
+        </div>
+
+        <h2>Featured Products (<span th:text="${totalProducts}">0</span> available)</h2>
+        <div class="grid" th:if="${products != null and !products.isEmpty()}">
+            <div class="card" th:each="product : ${products}">
+                <div>
+                    <h3 th:text="${product.name}">Product Name</h3>
+                    <p th:text="${product.description != null ? product.description : 'No description provided.'}">Product Description</p>
+                </div>
+                <div class="card-footer" style="flex-wrap: wrap; gap: 0.5rem;">
+                    <div>
+                        <span class="price" th:text="'$' + ${product.price}">$0.00</span>
+                        <div class="stock" th:text="${product.stockQuantity} + ' in stock'">10 in stock</div>
+                    </div>
+                    <div style="display: flex; gap: 0.4rem;">
+                        <a th:href="@{'/web/products/' + ${product.id}}" class="btn btn-outline" style="padding: 0.35rem 0.65rem; font-size: 0.85rem;">View</a>
+                        <form th:action="@{/cart/add}" method="post" style="display: inline;">
+                            <input type="hidden" name="productId" th:value="${product.id}" />
+                            <input type="hidden" name="quantity" value="1" />
+                            <button type="submit" class="btn btn-primary" style="padding: 0.35rem 0.75rem; font-size: 0.85rem;">+ Cart</button>
+                        </form>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div th:if="${products == null or products.isEmpty()}" style="text-align: center; padding: 3rem; color: var(--muted); background: white; border-radius: 10px; border: 1px solid var(--border); margin-top: 1rem;">
+            <p>No products in the database yet.</p>
+            <a href="/web/products/new" class="btn btn-primary" style="margin-top: 1rem;">Add First Product</a>
+        </div>
+    </div>
+</body>
+</html>
+

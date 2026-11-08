@@ -1,0 +1,565 @@
+{
+  "info": {
+    "_postman_id": "e4f8d9b1-5e27-4a0b-93bf-4d37149a4601",
+    "name": "E-Commerce Microservice API",
+    "description": "Complete Postman collection for testing the Spring Boot E-Commerce service, with automated Keycloak OAuth2 token generation, automatic variable capture (tokens, order numbers, product IDs), public browsing, customer checkout, and admin order management.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:8080",
+      "type": "string"
+    },
+    {
+      "key": "keycloakUrl",
+      "value": "http://localhost:8777/realms/dev-realm",
+      "type": "string"
+    },
+    {
+      "key": "clientId",
+      "value": "spring-boot-public",
+      "type": "string"
+    },
+    {
+      "key": "userToken",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "adminToken",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "orderNumber",
+      "value": "ORD-SAMPLE1",
+      "type": "string"
+    },
+    {
+      "key": "productId",
+      "value": "1",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "0. Authentication & Registration",
+      "item": [
+        {
+          "name": "Register New User (Public)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"testuser\",\n  \"email\": \"testuser@example.com\",\n  \"password\": \"password123\",\n  \"fullName\": \"Test User\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/auth/register",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "auth", "register"]
+            },
+            "description": "Registers a new user account with hashed credentials and ROLE_USER."
+          }
+        },
+        {
+          "name": "Generate User Token (user / user123)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "var jsonData = pm.response.json();",
+                  "if (jsonData.access_token) {",
+                  "    pm.collectionVariables.set('userToken', jsonData.access_token);",
+                  "    pm.test('User token generated and stored in {{userToken}}', function () {",
+                  "        pm.expect(jsonData.access_token).to.be.a('string');",
+                  "    });",
+                  "} else {",
+                  "    pm.test('Failed to retrieve access_token', function () {",
+                  "        pm.expect.fail('No access_token found in response');",
+                  "    });",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/x-www-form-urlencoded"
+              }
+            ],
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                { "key": "grant_type", "value": "password", "type": "text" },
+                { "key": "client_id", "value": "spring-boot-public", "type": "text" },
+                { "key": "username", "value": "user", "type": "text" },
+                { "key": "password", "value": "user123", "type": "text" }
+              ]
+            },
+            "url": {
+              "raw": "{{keycloakUrl}}/protocol/openid-connect/token",
+              "host": ["{{keycloakUrl}}"],
+              "path": ["protocol", "openid-connect", "token"]
+            },
+            "description": "Requests an OAuth2 JWT token for regular user (ROLE_USER) from Keycloak. The test script automatically saves the access token into {{userToken}}."
+          }
+        },
+        {
+          "name": "Generate Admin Token (admin / admin123)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "var jsonData = pm.response.json();",
+                  "if (jsonData.access_token) {",
+                  "    pm.collectionVariables.set('adminToken', jsonData.access_token);",
+                  "    pm.test('Admin token generated and stored in {{adminToken}}', function () {",
+                  "        pm.expect(jsonData.access_token).to.be.a('string');",
+                  "    });",
+                  "} else {",
+                  "    pm.test('Failed to retrieve access_token', function () {",
+                  "        pm.expect.fail('No access_token found in response');",
+                  "    });",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/x-www-form-urlencoded"
+              }
+            ],
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                { "key": "grant_type", "value": "password", "type": "text" },
+                { "key": "client_id", "value": "spring-boot-public", "type": "text" },
+                { "key": "username", "value": "admin", "type": "text" },
+                { "key": "password", "value": "admin123", "type": "text" }
+              ]
+            },
+            "url": {
+              "raw": "{{keycloakUrl}}/protocol/openid-connect/token",
+              "host": ["{{keycloakUrl}}"],
+              "path": ["protocol", "openid-connect", "token"]
+            },
+            "description": "Requests an OAuth2 JWT token for admin user (ROLE_ADMIN, ROLE_USER) from Keycloak. The test script automatically saves the access token into {{adminToken}}."
+          }
+        },
+        {
+          "name": "Generate Token (Confidential Client)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "var jsonData = pm.response.json();",
+                  "if (jsonData.access_token) {",
+                  "    pm.collectionVariables.set('userToken', jsonData.access_token);",
+                  "    pm.test('Token generated and saved to {{userToken}}', function () {",
+                  "        pm.expect(jsonData.access_token).to.be.a('string');",
+                  "    });",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/x-www-form-urlencoded"
+              }
+            ],
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                { "key": "grant_type", "value": "password", "type": "text" },
+                { "key": "client_id", "value": "spring-boot-client", "type": "text" },
+                { "key": "client_secret", "value": "spring-boot-client-secret", "type": "text" },
+                { "key": "username", "value": "user", "type": "text" },
+                { "key": "password", "value": "user123", "type": "text" }
+              ]
+            },
+            "url": {
+              "raw": "{{keycloakUrl}}/protocol/openid-connect/token",
+              "host": ["{{keycloakUrl}}"],
+              "path": ["protocol", "openid-connect", "token"]
+            },
+            "description": "Alternate request using the confidential client 'spring-boot-client' with client_secret."
+          }
+        }
+      ]
+    },
+    {
+      "name": "1. Public Endpoints",
+      "item": [
+        {
+          "name": "API Service Info",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/public/info",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "public", "info"]
+            },
+            "description": "Public health & service metadata endpoint."
+          }
+        },
+        {
+          "name": "List All Products (Public)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/products?page=0&size=10",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "products"],
+              "query": [
+                { "key": "page", "value": "0" },
+                { "key": "size", "value": "10" },
+                { "key": "category", "value": "Electronics", "disabled": true },
+                { "key": "search", "value": "Keyboard", "disabled": true }
+              ]
+            },
+            "description": "Public paginated catalog with optional ?category= and ?search= parameters."
+          }
+        },
+        {
+          "name": "Get Product by ID (Public)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/products/{{productId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "products", "{{productId}}"]
+            },
+            "description": "Public product lookup by numeric ID."
+          }
+        }
+      ]
+    },
+    {
+      "name": "2. Products Admin CRUD",
+      "item": [
+        {
+          "name": "Create Product (Admin)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "var jsonData = pm.response.json();",
+                  "if (jsonData.id) {",
+                  "    pm.collectionVariables.set('productId', jsonData.id.toString());",
+                  "    pm.test('Product created with ID: ' + jsonData.id, function () {",
+                  "        pm.expect(jsonData.id).to.be.a('number');",
+                  "    });",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [{ "key": "token", "value": "{{adminToken}}", "type": "string" }]
+            },
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Wireless Noise Cancelling Headphones\",\n  \"description\": \"Premium over-ear wireless headphones with active noise cancellation.\",\n  \"price\": 299.99,\n  \"stockQuantity\": 50,\n  \"category\": \"Electronics\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/products",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "products"]
+            },
+            "description": "Admin endpoint to create a new product. Automatically saves the created ID into {{productId}}."
+          }
+        },
+        {
+          "name": "Update Product (Admin)",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [{ "key": "token", "value": "{{adminToken}}", "type": "string" }]
+            },
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Wireless Noise Cancelling Headphones Gen 2\",\n  \"description\": \"Updated with Bluetooth 5.4 and longer battery life.\",\n  \"price\": 279.99,\n  \"stockQuantity\": 45,\n  \"category\": \"Electronics\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/products/{{productId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "products", "{{productId}}"]
+            },
+            "description": "Admin endpoint to update an existing product."
+          }
+        },
+        {
+          "name": "Delete Product (Admin)",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [{ "key": "token", "value": "{{adminToken}}", "type": "string" }]
+            },
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/products/{{productId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "products", "{{productId}}"]
+            },
+            "description": "Admin endpoint to delete a product."
+          }
+        }
+      ]
+    },
+    {
+      "name": "3. Customer Orders",
+      "item": [
+        {
+          "name": "Place Order (Checkout)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "var jsonData = pm.response.json();",
+                  "if (jsonData.orderNumber) {",
+                  "    pm.collectionVariables.set('orderNumber', jsonData.orderNumber);",
+                  "    pm.test('Order placed successfully: ' + jsonData.orderNumber, function () {",
+                  "        pm.expect(jsonData.orderNumber).to.be.a('string');",
+                  "    });",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [{ "key": "token", "value": "{{userToken}}", "type": "string" }]
+            },
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"items\": [\n    {\n      \"productId\": {{productId}},\n      \"quantity\": 2\n    }\n  ]\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/orders",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "orders"]
+            },
+            "description": "Customer checkout. Checks inventory, decrements stock, and automatically sets {{orderNumber}} from the response."
+          }
+        },
+        {
+          "name": "Get User Order History",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [{ "key": "token", "value": "{{userToken}}", "type": "string" }]
+            },
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/orders",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "orders"]
+            },
+            "description": "Fetches past orders for the authenticated customer."
+          }
+        },
+        {
+          "name": "Get Order By Order Number",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [{ "key": "token", "value": "{{userToken}}", "type": "string" }]
+            },
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/orders/{{orderNumber}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "orders", "{{orderNumber}}"]
+            },
+            "description": "Retrieve order by order number. Customers can only view their own orders; admins can view any."
+          }
+        }
+      ]
+    },
+    {
+      "name": "4. Admin Orders",
+      "item": [
+        {
+          "name": "List All Orders (Admin)",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [{ "key": "token", "value": "{{adminToken}}", "type": "string" }]
+            },
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/orders?page=0&size=20",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "admin", "orders"],
+              "query": [
+                { "key": "page", "value": "0" },
+                { "key": "size", "value": "20" },
+                { "key": "status", "value": "PENDING", "disabled": true }
+              ]
+            },
+            "description": "Admin endpoint to view all customer orders."
+          }
+        },
+        {
+          "name": "Update Order Status (Admin)",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [{ "key": "token", "value": "{{adminToken}}", "type": "string" }]
+            },
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"SHIPPED\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/orders/{{orderNumber}}/status",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "admin", "orders", "{{orderNumber}}", "status"]
+            },
+            "description": "Admin endpoint to update order status. Marking as CANCELLED automatically restores inventory."
+          }
+        }
+      ]
+    },
+    {
+      "name": "5. User Profile",
+      "item": [
+        {
+          "name": "Get Authenticated User Profile",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [{ "key": "token", "value": "{{userToken}}", "type": "string" }]
+            },
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/user/profile",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "user", "profile"]
+            },
+            "description": "Inspects current user ID, preferred_username, email, and realm roles from the JWT token."
+          }
+        }
+      ]
+    },
+    {
+      "name": "6. Spring Batch Pipeline",
+      "item": [
+        {
+          "name": "Trigger Full Batch Pipeline (CSV -> DB -> JSON)",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/batch/run?inputCsvPath=data/products_large.csv&outputJsonPath=data/exported_products.json",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "batch", "run"],
+              "query": [
+                { "key": "inputCsvPath", "value": "data/products_large.csv" },
+                { "key": "outputJsonPath", "value": "data/exported_products.json" }
+              ]
+            },
+            "description": "Triggers the two-step chunked batch job: (1) Streams large CSV into PostgreSQL in chunks of 50, then (2) Streams database records into JSON."
+          }
+        },
+        {
+          "name": "Get Batch Job Status & Metrics",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/batch/status/1",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "batch", "status", "1"]
+            },
+            "description": "Inspects commit counts, items read, and items written for a JobExecution."
+          }
+        },
+        {
+          "name": "Generate Large Sample CSV (2,000 items)",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/batch/generate-sample-csv?totalRows=2000&filePath=data/products_large.csv",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "batch", "generate-sample-csv"],
+              "query": [
+                { "key": "totalRows", "value": "2000" },
+                { "key": "filePath", "value": "data/products_large.csv" }
+              ]
+            },
+            "description": "Generates a realistic large product dataset on disk for testing chunking."
+          }
+        }
+      ]
+    }
+  ]
+}

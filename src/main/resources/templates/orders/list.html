@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:th="http://www.thymeleaf.org" xmlns:sec="http://www.thymeleaf.org/extras/spring-security">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>My Orders - E-Commerce Store</title>
+    <style>
+        :root {
+            --primary: #2563eb;
+            --primary-dark: #1d4ed8;
+            --bg: #f8fafc;
+            --surface: #ffffff;
+            --text: #0f172a;
+            --muted: #64748b;
+            --border: #e2e8f0;
+        }
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; background: var(--bg); color: var(--text); line-height: 1.6; }
+        header { background: var(--surface); border-bottom: 1px solid var(--border); padding: 1rem 2rem; display: flex; justify-content: space-between; align-items: center; }
+        .logo { font-size: 1.25rem; font-weight: 700; color: var(--primary); text-decoration: none; }
+        nav a { margin-left: 1.25rem; text-decoration: none; color: var(--muted); font-weight: 500; font-size: 0.95rem; }
+        nav a:hover { color: var(--primary); }
+        .container { max-width: 1000px; margin: 2rem auto; padding: 0 1rem; }
+        .page-title { margin-bottom: 1.5rem; font-size: 1.8rem; }
+        table { width: 100%; border-collapse: collapse; background: var(--surface); border-radius: 10px; overflow: hidden; border: 1px solid var(--border); }
+        th, td { padding: 1rem; text-align: left; border-bottom: 1px solid var(--border); }
+        th { background: #f1f5f9; font-weight: 600; font-size: 0.85rem; text-transform: uppercase; color: var(--muted); }
+        tr:last-child td { border-bottom: none; }
+        .badge { padding: 0.25rem 0.6rem; border-radius: 9999px; font-size: 0.75rem; font-weight: 700; text-transform: uppercase; }
+        .badge-DELIVERED { background: #dcfce7; color: #15803d; }
+        .badge-SHIPPED { background: #e0f2fe; color: #0369a1; }
+        .badge-PROCESSING { background: #fef9c3; color: #854d0e; }
+        .badge-CONFIRMED { background: #e0e7ff; color: #3730a3; }
+        .badge-PENDING { background: #f3f4f6; color: #374151; }
+        .badge-CANCELLED { background: #fee2e2; color: #991b1b; }
+        .btn { display: inline-block; padding: 0.4rem 0.8rem; border-radius: 6px; font-weight: 600; text-decoration: none; cursor: pointer; border: none; font-size: 0.85rem; }
+        .btn-outline { background: transparent; border: 1px solid var(--border); color: var(--text); }
+        .btn-outline:hover { background: #f1f5f9; }
+        .btn-primary { background: var(--primary); color: white; }
+    </style>
+</head>
+<body>
+    <header>
+        <a href="/" class="logo">E-Commerce Store (Spring MVC)</a>
+        <nav style="display: flex; align-items: center; gap: 1rem;">
+            <a href="/">Home</a>
+            <a href="/web/products">Products</a>
+            <a href="/cart" th:if="${cart != null}">
+                Cart (<span th:text="${cart.totalQuantity}">0</span>)
+            </a>
+            <a href="/web/orders" style="font-weight: 700; color: var(--primary);">My Orders</a>
+
+            <div style="display: flex; align-items: center; gap: 0.75rem;">
+                <span style="font-size: 0.9rem; color: var(--muted);">
+                    Hi, <strong style="color: var(--text);" sec:authentication="name">User</strong>
+                </span>
+                <form th:action="@{/logout}" method="post" style="display: inline;">
+                    <button type="submit" class="btn btn-outline" style="padding: 0.25rem 0.6rem; font-size: 0.8rem;">Logout</button>
+                </form>
+            </div>
+        </nav>
+    </header>
+
+    <div class="container">
+        <h1 class="page-title">Order History</h1>
+
+        <div th:if="${orders.isEmpty()}" style="text-align: center; background: white; padding: 3rem 1rem; border-radius: 12px; border: 1px solid var(--border);">
+            <p style="color: var(--muted); margin-bottom: 1rem;">You have not placed any orders yet.</p>
+            <a href="/web/products" class="btn btn-primary">Start Shopping</a>
+        </div>
+
+        <table th:if="${!orders.isEmpty()}">
+            <thead>
+                <tr>
+                    <th>Order #</th>
+                    <th>Date Placed</th>
+                    <th>Items</th>
+                    <th>Total</th>
+                    <th>Status</th>
+                    <th></th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr th:each="order : ${orders}">
+                    <td><strong th:text="${order.orderNumber}">ORD-12345</strong></td>
+                    <td th:text="${order.createdAt != null ? order.createdAt : 'Recent'}">2026-11-07</td>
+                    <td>
+                        <span th:text="${order.items.size()} + ' item(s)'">2 item(s)</span>
+                    </td>
+                    <td><strong style="color: #047857;" th:text="'$' + ${order.totalAmount}">$0.00</strong></td>
+                    <td>
+                        <span class="badge" th:classappend="'badge-' + ${order.status}" th:text="${order.status}">PENDING</span>
+                    </td>
+                    <td>
+                        <a th:href="@{'/web/orders/' + ${order.orderNumber}}" class="btn btn-outline">Receipt &rarr;</a>
+                    </td>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+</body>
+</html>
+

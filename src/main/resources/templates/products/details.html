@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:th="http://www.thymeleaf.org" xmlns:sec="http://www.thymeleaf.org/extras/spring-security">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title th:text="${product.name} + ' - Product Details'">Product Details</title>
+    <style>
+        :root {
+            --primary: #2563eb;
+            --primary-dark: #1d4ed8;
+            --bg: #f8fafc;
+            --surface: #ffffff;
+            --text: #0f172a;
+            --muted: #64748b;
+            --border: #e2e8f0;
+        }
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; background: var(--bg); color: var(--text); line-height: 1.6; }
+        header { background: var(--surface); border-bottom: 1px solid var(--border); padding: 1rem 2rem; display: flex; justify-content: space-between; align-items: center; }
+        .logo { font-size: 1.25rem; font-weight: 700; color: var(--primary); text-decoration: none; }
+        nav a { margin-left: 1.25rem; text-decoration: none; color: var(--muted); font-weight: 500; font-size: 0.95rem; }
+        .container { max-width: 800px; margin: 2rem auto; padding: 0 1rem; }
+        .detail-card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 2rem; }
+        h1 { font-size: 1.75rem; margin-bottom: 0.5rem; }
+        .badge { background: #e0f2fe; color: #0369a1; padding: 0.25rem 0.6rem; border-radius: 4px; font-size: 0.85rem; font-weight: 600; display: inline-block; margin-bottom: 1rem; }
+        .price { font-size: 2rem; font-weight: 700; color: #047857; margin-bottom: 1rem; }
+        .stock { font-size: 1rem; margin-bottom: 1.5rem; color: var(--muted); }
+        .desc { font-size: 1.05rem; line-height: 1.7; color: #334155; margin-bottom: 2rem; }
+        .btn { display: inline-block; padding: 0.6rem 1.2rem; border-radius: 6px; font-weight: 600; text-decoration: none; cursor: pointer; border: none; font-size: 0.95rem; }
+        .btn-outline { background: transparent; border: 1px solid var(--border); color: var(--text); }
+        .meta { border-top: 1px solid var(--border); padding-top: 1rem; margin-top: 1.5rem; font-size: 0.85rem; color: var(--muted); }
+    </style>
+</head>
+<body>
+    <header>
+        <a href="/" class="logo">E-Commerce Store (Spring MVC)</a>
+        <nav style="display: flex; align-items: center; gap: 1rem;">
+            <a href="/">Home</a>
+            <a href="/web/products">Products</a>
+            <a href="/cart" style="font-weight: 600;">
+                Cart (<span th:text="${cart != null ? cart.totalQuantity : 0}">0</span>)
+            </a>
+            <a href="/web/orders" sec:authorize="isAuthenticated()">My Orders</a>
+            <a href="/web/products/new" sec:authorize="hasRole('ADMIN')">Add Product</a>
+            <a href="/swagger-ui.html" target="_blank">Swagger OpenAPI</a>
+
+            <div sec:authorize="!isAuthenticated()" style="display: flex; gap: 0.5rem; margin-left: 0.5rem;">
+                <a href="/login" class="btn btn-outline" style="padding: 0.35rem 0.75rem; font-size: 0.85rem;">Sign In</a>
+                <a href="/register" class="btn btn-primary" style="padding: 0.35rem 0.75rem; font-size: 0.85rem;">Register</a>
+            </div>
+
+            <div sec:authorize="isAuthenticated()" style="display: flex; align-items: center; gap: 0.75rem; margin-left: 0.5rem;">
+                <span style="font-size: 0.9rem; color: var(--muted);">
+                    Hello, <strong style="color: var(--text);" sec:authentication="name">User</strong>
+                </span>
+                <form th:action="@{/logout}" method="post" style="display: inline;">
+                    <button type="submit" class="btn btn-outline" style="padding: 0.3rem 0.65rem; font-size: 0.8rem;">Logout</button>
+                </form>
+            </div>
+        </nav>
+    </header>
+
+    <div class="container">
+        <div class="detail-card">
+            <span class="badge" th:text="${product.category != null ? product.category : 'General'}">Category</span>
+            <h1 th:text="${product.name}">Product Name</h1>
+            <div class="price" th:text="'$' + ${product.price}">$0.00</div>
+            <div class="stock">Inventory: <strong th:text="${product.stockQuantity}">0</strong> units available</div>
+
+            <form th:action="@{/cart/add}" method="post" style="display: flex; gap: 0.75rem; align-items: center; margin-bottom: 2rem;">
+                <input type="hidden" name="productId" th:value="${product.id}" />
+                <label for="qty" style="font-weight: 600; font-size: 0.95rem;">Qty:</label>
+                <input type="number" id="qty" name="quantity" value="1" min="1" max="99" style="width: 70px; padding: 0.5rem; border: 1px solid var(--border); border-radius: 6px; text-align: center;" />
+                <button type="submit" class="btn" style="background: var(--primary); color: white; padding: 0.6rem 1.5rem;">+ Add to Cart</button>
+            </form>
+
+            <p class="desc" th:text="${product.description != null ? product.description : 'No detailed description available for this item.'}"></p>
+
+            <a href="/web/products" class="btn btn-outline">&larr; Back to Catalog</a>
+
+            <div class="meta">
+                <div>Product ID: <span th:text="${product.id}"></span></div>
+                <div>Created: <span th:text="${product.createdAt}"></span></div>
+            </div>
+        </div>
+    </div>
+</body>
+</html>
+
