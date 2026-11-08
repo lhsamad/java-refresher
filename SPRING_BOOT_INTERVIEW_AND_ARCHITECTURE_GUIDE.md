@@ -10,7 +10,7 @@
 3. [Deep Dive 2: Multi-Database Coordination & Distributed Transactions (2PC vs. Sagas)](#3-deep-dive-2-multi-database-coordination--distributed-transactions-2pc-vs-sagas)
 4. [Deep Dive 3: Managing Large Datasets, High-Throughput Ingestion & Memory Optimization](#4-deep-dive-3-managing-large-datasets-high-throughput-ingestion--memory-optimization)
 5. [Deep Dive 4: Concurrency, Locking Strategies & Database Anomalies](#5-deep-dive-4-concurrency-locking-strategies--database-anomalies)
-6. [Comprehensive Senior & Staff Interview Q&A Bank (16 Deep Scenarios)](#6-comprehensive-senior--staff-interview-qa-bank)
+6. [Comprehensive Senior & Staff Interview Q&A Bank (22 Deep Scenarios)](#6-comprehensive-senior--staff-interview-qa-bank)
 7. [The Master Study Curriculum & Interview Topic Checklist](#7-the-master-study-curriculum--interview-topic-checklist)
 
 ---
@@ -71,8 +71,9 @@ The [`java-refresher`](file:///Users/luqmansamad/code/feenyx/java-refresher) cod
    - Manages stock verification, atomic inventory decrements, and cascaded order item persistence in a single transaction boundary.
 
 3. **High-Throughput Chunk-Oriented Batch Pipeline ([`BatchJobConfig.java`](file:///Users/luqmansamad/code/feenyx/java-refresher/src/main/java/com/practice/java_refresher/batch/config/BatchJobConfig.java))**:
-   - **Step 1 (`importCsvToDbStep`)**: Streams CSV records line-by-line using `FlatFileItemReader` $\rightarrow$ validates via [`ProductCsvProcessor.java`](file:///Users/luqmansamad/code/feenyx/java-refresher/src/main/java/com/practice/java_refresher/batch/processor/ProductCsvProcessor.java) $\rightarrow$ persists in chunks of 50 via `JpaItemWriter`.
-   - **Step 2 (`exportDbToJsonStep`)**: Paginates PostgreSQL via `JpaPagingItemReader` $\rightarrow$ transforms via [`ProductJsonProcessor.java`](file:///Users/luqmansamad/code/feenyx/java-refresher/src/main/java/com/practice/java_refresher/batch/processor/ProductJsonProcessor.java) $\rightarrow$ streams JSON directly to disk via [`ProductJsonStreamWriter.java`](file:///Users/luqmansamad/code/feenyx/java-refresher/src/main/java/com/practice/java_refresher/batch/writer/ProductJsonStreamWriter.java).
+   - **Step 1 (`importCsvToDbStep`)**: Streams CSV records line-by-line using `FlatFileItemReader` $\rightarrow$ validates via [`ProductCsvProcessor.java`](file:///Users/luqmansamad/code/feenyx/java-refresher/src/main/java/com/practice/java_refresher/batch/processor/ProductCsvProcessor.java) $\rightarrow$ persists in chunks of **500** (`CHUNK_SIZE = 500`) via **`JdbcBatchItemWriter`** (bypassing Hibernate L1 cache for maximal ingestion throughput).
+   - **Step 2 (`exportDbToJsonStep`)**: Streams PostgreSQL records via **`JdbcCursorItemReader`** (`dbProductReader()`) $\rightarrow$ transforms via [`ProductJsonProcessor.java`](file:///Users/luqmansamad/code/feenyx/java-refresher/src/main/java/com/practice/java_refresher/batch/processor/ProductJsonProcessor.java) $\rightarrow$ streams JSON directly to disk in chunks of **500** via [`ProductJsonStreamWriter.java`](file:///Users/luqmansamad/code/feenyx/java-refresher/src/main/java/com/practice/java_refresher/batch/writer/ProductJsonStreamWriter.java).
+   - **Download Endpoint**: [`GET /api/batch/download`](file:///Users/luqmansamad/code/feenyx/java-refresher/src/main/java/com/practice/java_refresher/controller/BatchController.java) streams the generated JSON file with path-traversal safeguards and direct download buttons in the Thymeleaf batch dashboard.
 
 ---
 
@@ -478,8 +479,9 @@ When querying thousands of rows via `productRepository.findAll()`, Hibernate kee
    ```
 
 3. **Spring Batch Chunking ([`BatchJobConfig.java`](file:///Users/luqmansamad/code/feenyx/java-refresher/src/main/java/com/practice/java_refresher/batch/config/BatchJobConfig.java)):**
-   - Keeps memory usage strictly bounded to $O(\text{chunk\_size})$.
-   - Reads 50 records $\rightarrow$ Processes 50 records $\rightarrow$ Writes 50 records $\rightarrow$ Commits transaction $\rightarrow$ Clears persistence context.
+   - Keeps memory usage strictly bounded to $O(\text{chunk\_size})$ (where `CHUNK_SIZE = 500`).
+   - Reads 500 records $\rightarrow$ Processes 500 records $\rightarrow$ Writes 500 records via `JdbcBatchItemWriter` $\rightarrow$ Commits transaction.
+   - Using native JDBC batching (`PreparedStatement.executeBatch()`) completely bypasses the Hibernate 1st-level cache and entity dirty checking, preventing heap bloat entirely.
 
 ---
 
@@ -516,6 +518,338 @@ spring.datasource.url=jdbc:postgresql://localhost:5432/ecommerce?reWriteBatchedI
 | **Complexity** | $O(N)$ — DB must scan 1,000,050 rows and discard the first 1,000,000. | $O(\log N)$ — B-Tree index seek directly locates row 1,000,000. |
 | **Execution Time** | Increases linearly with page depth (5000ms+ at deep offsets). | **Constant time ($<2\text{ms}$)** regardless of whether fetching page 1 or page 10,000. |
 | **Data Drifts** | New inserts shift offsets, causing duplicate or skipped rows. | **Stable:** Unaffected by concurrent inserts before the cursor. |
+
+---
+
+### D. Spring Batch Transaction Management & Chunk-Oriented Processing
+
+In high-throughput ETL pipelines (such as [`BatchJobConfig.java`](file:///Users/luqmansamad/code/feenyx/java-refresher/src/main/java/com/practice/java_refresher/batch/config/BatchJobConfig.java)), transactions are demarcated at the **chunk boundary** rather than per record or per job.
+
+```
+                      CHUNK BOUNDARY (e.g. CHUNK_SIZE = 500)
+┌────────────────────────────────────────────────────────────────────────────┐
+│ 1. Transaction Begun by PlatformTransactionManager                         │
+│                                                                            │
+│    ┌──────────────────┐                                                    │
+│    │ ItemReader       │ ──> Read item 1 .. 500 sequentially                │
+│    └────────┬─────────┘                                                    │
+│             │                                                              │
+│             ▼                                                              │
+│    ┌──────────────────┐                                                    │
+│    │ ItemProcessor    │ ──> Transform/Validate item 1 .. 500               │
+│    └────────┬─────────┘                                                    │
+│             │                                                              │
+│             ▼                                                              │
+│    ┌──────────────────┐                                                    │
+│    │ ItemWriter       │ ──> Batch Write List of 500 items to DB in one go  │
+│    └──────────────────┘                                                    │
+│                                                                            │
+│ 2. PlatformTransactionManager.commit()                                     │
+│    ├── Commits all 500 DB records atomically                               │
+│    └── Commits BATCH_STEP_EXECUTION metadata & ExecutionContext offsets     │
+└────────────────────────────────────────────────────────────────────────────┘
+```
+
+#### 1. The Role of `PlatformTransactionManager` & `StepBuilder`
+- **Configuration vs. Execution**: `StepBuilder` is merely a fluent configuration DSL. It does **not** execute transactions itself. Instead, it builds a `TaskletStep` backed by a `ChunkOrientedTasklet` (or `FaultTolerantChunkProcessor`) that wraps chunk processing in Spring's programmatic `TransactionTemplate`.
+- **Mandatory in Spring Batch 5+**: Legacy `StepBuilderFactory` (which implicitly inherited transaction managers) was deprecated and removed. In modern Spring Batch, developers must explicitly pass both `JobRepository` and `PlatformTransactionManager` to the `StepBuilder`:
+  ```java
+  new StepBuilder("importCsvToDbStep", jobRepository)
+      .<ProductCsvDto, Product>chunk(CHUNK_SIZE)
+      .transactionManager(transactionManager) // REQUIRED in Spring Batch 5+
+      .reader(csvProductReader)
+      .processor(productCsvProcessor)
+      .writer(jdbcProductWriter())
+      ...
+  ```
+- **Source of the Bean**: Spring Boot auto-configures `PlatformTransactionManager` (`JpaTransactionManager` or `DataSourceTransactionManager` depending on classpath dependencies), which coordinates connections, physical commits, and rollbacks on the underlying `DataSource`.
+
+#### 2. Chunk-Level Transaction Lifecycle
+For a job with `CHUNK_SIZE = 500`:
+1. **Transaction Start**: The step asks `PlatformTransactionManager` to start a new transaction (`getTransaction()`).
+2. **Read Loop**: The `ItemReader` fetches items one by one until 500 items are gathered or `read()` returns `null` (EOF).
+3. **Process Loop**: Each item is passed to the `ItemProcessor`. If an item is filtered out (processor returns `null`), it is excluded from the chunk.
+4. **Batch Write**: When 500 processed items accumulate, they are passed as a `Chunk<O>` to `ItemWriter.write(chunk)`. In [`jdbcProductWriter()`](file:///Users/luqmansamad/code/feenyx/java-refresher/src/main/java/com/practice/java_refresher/batch/config/BatchJobConfig.java#L81-L90), JDBC batch execution fires a single multi-row prepared statement.
+5. **Commit**: If no exceptions occur, `PlatformTransactionManager.commit()` commits the 500 inserted rows **and** saves the step execution state (read count, commit count, stream positions) into Spring Batch's metadata tables (`BATCH_STEP_EXECUTION`, `BATCH_STEP_EXECUTION_CONTEXT`).
+
+#### 3. What Happens When a Chunk Fails? (Standard vs. Fault-Tolerant)
+
+A common point of confusion is what happens to the entire job when a single chunk (or batch) encounters an error:
+
+##### A. Are Previously Committed Chunks Rolled Back?
+**No. In Spring Batch, previously committed chunks remain permanently committed.**
+* Each chunk boundary represents an **independent, physical database transaction**.
+* If a job has 20 chunks of 500 items (10,000 items total) and **Chunk 5 fails**:
+  * **Chunks 1 through 4 (items 1–2,000)** were already committed in their own separate transactions. They are **safe and preserved** in the database.
+  * Only **Chunk 5 (items 2,001–2,500)** is rolled back.
+  * Future chunks (6 through 20) are halted.
+
+##### B. Scenario 1: Standard Step (No Fault Tolerance)
+*(e.g., [`exportDbToJsonStep`](file:///Users/luqmansamad/code/feenyx/java-refresher/src/main/java/com/practice/java_refresher/batch/config/BatchJobConfig.java#L138-L147))*
+
+1. **Immediate Chunk Rollback**: The active transaction for the failing 500-item chunk is rolled back immediately via `PlatformTransactionManager.rollback()`.
+2. **Step & Job Transition to `FAILED`**:
+   * Execution stops immediately.
+   * Spring Batch records the status as `FAILED` in the metadata table `BATCH_STEP_EXECUTION`, along with the exception stack trace in `EXIT_MESSAGE`.
+3. **Execution Context Preservation**:
+   * Spring Batch preserves the progress of the last successfully committed chunk (`commitCount = 4`, `readCount = 2000`) in `BATCH_STEP_EXECUTION_CONTEXT`.
+4. **Behavior on Job Restart**:
+   * When re-launched with identical job parameters, Spring Batch **does not start from scratch**.
+   * It inspects `BATCH_STEP_EXECUTION_CONTEXT`, skips the 2,000 items that already committed, and **resumes execution directly at Chunk 5 (item 2,001)**!
+
+##### C. Scenario 2: Fault-Tolerant Step (With `skip`)
+*(e.g., [`importCsvToDbStep`](file:///Users/luqmansamad/code/feenyx/java-refresher/src/main/java/com/practice/java_refresher/batch/config/BatchJobConfig.java#L93-L105) configured with `.faultTolerant().skip(Exception.class).skipLimit(20)`)*
+
+1. **Chunk Rollback**: The failing chunk's transaction rolls back completely.
+2. **Item-by-Item Scan Mode**:
+   * `FaultTolerantChunkProcessor` switches to **scan mode** and retries the failed chunk **one item at a time**, executing each in an isolated single-item transaction.
+3. **Isolating & Discarding Bad Data**:
+   * Valid items (e.g. items 1–419) execute and commit individually.
+   * When the bad record (e.g. item 420 with malformed CSV data or a constraint violation) throws an exception:
+     * Spring Batch checks if the exception matches the configured `.skip()` class and if `skipCount < skipLimit`.
+     * It increments `skipCount` in `BATCH_STEP_EXECUTION`, swallows the error, and discards item 420.
+4. **Resuming Normal Chunking**:
+   * Items 421–500 process and commit.
+   * Normal chunk-sized processing resumes for Chunk 6 onward. The job completes with status `COMPLETED` (with a recorded skip count).
+5. **If Skips Exceed `skipLimit`**:
+   * If a 21st record fails, the exception is propagated, scan mode aborts, and the step terminates as `FAILED` (falling back to Scenario 1).
+
+> [!WARNING]
+> **Transaction Multiplication During Rollback Scans:**
+> If a chunk of 500 items encounters an error during writer execution with skip enabled, Spring Batch rolls back and executes 500 individual transactions to isolate the bad item. In high-concurrency environments, this can cause temporary connection starvation and transaction log spikes!
+
+##### D. Chunk Failure Comparison Matrix
+
+| Lifecycle Aspect | Standard Step (No Fault Tolerance) | Fault-Tolerant Step (`skipLimit = 20`) |
+| :--- | :--- | :--- |
+| **Current Chunk** | Rolled back completely. | Rolled back, scanned item-by-item, bad items discarded, valid items committed. |
+| **Past Chunks** | Untouched (already committed). | Untouched (already committed). |
+| **Future Chunks** | Halted (never executed). | Processed normally if skips stay $\le 20$. |
+| **Final Step Status** | `FAILED` | `COMPLETED` (if skips $\le 20$) or `FAILED` (if skips $> 20$). |
+| **On Job Restart** | Resumes from failed chunk via `ExecutionContext`. | N/A if completed; resumes from failure point if skip limit exceeded. |
+
+#### 4. The Non-Transactional Resource Pitfall (File & Stream Writers)
+Notice `exportDbToJsonStep` in [`BatchJobConfig.java`](file:///Users/luqmansamad/code/feenyx/java-refresher/src/main/java/com/practice/java_refresher/batch/config/BatchJobConfig.java#L138-L147):
+- Even though the writer writes to a file ([`ProductJsonStreamWriter.java`](file:///Users/luqmansamad/code/feenyx/java-refresher/src/main/java/com/practice/java_refresher/batch/writer/ProductJsonStreamWriter.java)), `transactionManager` is still strictly required to manage the database cursor stream (`JdbcCursorItemReader`) and commit Spring Batch metadata.
+- **The Caveat**: Files, sockets, and object stores (S3) are **non-transactional resources**. If an error occurs on item 490:
+  - The database cursor transaction and batch metadata transaction roll back.
+  - However, bytes already written to the file via `writer.write()` **cannot be rolled back by the database transaction manager**.
+- **Production Solutions for Non-Transactional Writers**:
+  1. **Write to Temp File + Atomic Rename**: Write output to a `.tmp` file and only rename it to the final target file in a `StepExecutionListener.afterStep()` when `stepExecution.getStatus() == BatchStatus.COMPLETED`.
+  2. **Track Byte Offsets via `ItemStream`**: Implement `ItemStream.update(ExecutionContext)` to record the exact byte offset at each chunk commit. On job restart, seek (`RandomAccessFile.seek()`) or truncate the file back to the last committed offset before resuming.
+
+##### Production File Retrieval & Streaming Architecture (`GET /api/batch/download`)
+Once a batch job's stream writer ([`ProductJsonStreamWriter.java`](file:///Users/luqmansamad/code/feenyx/java-refresher/src/main/java/com/practice/java_refresher/batch/writer/ProductJsonStreamWriter.java)) finishes writing records to disk, downstream clients and web frontends require a reliable, high-performance download endpoint.
+
+In [`BatchController.java`](file:///Users/luqmansamad/code/feenyx/java-refresher/src/main/java/com/practice/java_refresher/controller/BatchController.java):
+```java
+@GetMapping("/download")
+@Operation(summary = "Download ProductJsonStreamWriter JSON Output")
+public ResponseEntity<Resource> downloadExportedJson(
+        @RequestParam(defaultValue = "data/exported_products.json") String filePath,
+        @RequestParam(required = false) Long jobExecutionId)
+```
+
+**Key Architectural & Security Patterns Implemented**:
+1. **Zero-Copy / Heap-Bounded Streaming (`ResponseEntity<Resource>`)**:
+   - Returning `byte[]` requires reading the full file into JVM heap space. For a 500 MB exported JSON file, concurrent downloads quickly cause `OutOfMemoryError`.
+   - Returning `FileSystemResource` allows Spring MVC and Tomcat to delegate directly to the operating system's NIO `FileChannel.transferTo()` (zero-copy kernel buffer transfer), transferring bytes straight from the page cache to the network socket with $O(1)$ JVM heap footprint.
+2. **Defending Against Path Traversal (CWE-22)**:
+   - Query parameters like `?filePath=...` are untrusted user input that could access sensitive host files (`/etc/passwd` or `build.gradle`).
+   - Mitigated by resolving normalized absolute paths and strictly verifying directory containment:
+     ```java
+     Path basePath = Paths.get("data").toAbsolutePath().normalize();
+     Path resolvedPath = Paths.get(targetPath).toAbsolutePath().normalize();
+     if (!resolvedPath.startsWith(basePath)) {
+         return ResponseEntity.badRequest().build(); // 400 Bad Request
+     }
+     ```
+3. **Correlating Metadata via `JobRepository`**:
+   - Accepts `jobExecutionId` to dynamically look up the exact file produced by that run from `JobParameters['outputJsonPath']` stored in `JobRepository`, ensuring clients retrieve verified batch outputs.
+4. **RFC-Compliant Content Disposition**:
+   - Sets `HttpHeaders.CONTENT_DISPOSITION = "attachment; filename=\"...\""`, instructing user agents to save to disk rather than render JSON in the browser window, with `Content-Length` for download progress tracking.
+
+#### 5. Database ItemWriters for Business Data
+
+When persisting chunk results to a database, Spring Batch provides three primary `ItemWriter` implementations, each with distinct architectural and performance trade-offs:
+
+```
+                          ItemWriter<T>
+                               │
+       ┌───────────────────────┼───────────────────────┐
+       ▼                       ▼                       ▼
+JdbcBatchItemWriter      JpaItemWriter        RepositoryItemWriter
+(Direct SQL / Native     (Hibernate /         (Spring Data JPA
+ Prepared Statements)     EntityManager)       saveAll / Repository)
+  ⭐ Best Performance       Rich Entity Graphs   High Abstraction
+```
+
+##### A. `JdbcBatchItemWriter` (High-Throughput / Direct SQL)
+* **Package**: `org.springframework.batch.infrastructure.item.database.JdbcBatchItemWriter<T>`
+* **Mechanism**: Executes parameterized SQL via JDBC `PreparedStatement.addBatch()` and `executeBatch()`.
+* **Why it is fastest**: Completely bypasses the Hibernate `EntityManager`, dirty checking, and 1st-level cache. Memory remains flat $O(\text{chunk\_size})$, and network roundtrips are minimized (especially when combined with PostgreSQL `reWriteBatchedInserts=true`).
+* **Code Example** (from [`BatchJobConfig.java`](file:///Users/luqmansamad/code/feenyx/java-refresher/src/main/java/com/practice/java_refresher/batch/config/BatchJobConfig.java#L81-L90)):
+  ```java
+  @Bean
+  public JdbcBatchItemWriter<Product> jdbcProductWriter() {
+      return new JdbcBatchItemWriterBuilder<Product>()
+              .dataSource(dataSource)
+              .sql("""
+                   INSERT INTO products (name, description, price, stock_quantity, category, created_at, updated_at)
+                   VALUES (:name, :description, :price, :stockQuantity, :category, NOW(), NOW())
+                   """)
+              .beanMapped() // Maps Product getters to named parameters
+              .build();
+  }
+  ```
+
+##### B. `JpaItemWriter` (Entity Graphs & Cascades)
+* **Package**: `org.springframework.batch.infrastructure.item.database.JpaItemWriter<T>`
+* **Mechanism**: Takes an `EntityManagerFactory` and calls `entityManager.merge(item)` for each item in the chunk. Hibernate automatically flushes SQL queries upon transaction commit.
+* **When to choose**: When incoming entities have nested child collections (`@OneToMany` with `CascadeType.ALL`), complex auditing listeners (`@PrePersist`), or polymorphic inheritance.
+* **Trade-off**: Higher CPU and memory overhead. Hibernate maintains snapshot copies of every entity for dirty checking in the persistence context, which slows down bulk writes compared to native JDBC.
+
+##### C. `RepositoryItemWriter` (Spring Data Repositories)
+* **Package**: `org.springframework.batch.infrastructure.item.data.RepositoryItemWriter<T>`
+* **Mechanism**: Adapts an existing Spring Data repository (e.g., `ProductRepository.save(item)` or `saveAll`).
+* **When to choose**: Simple, low-to-medium volume pipelines where developers want to reuse domain logic already encapsulated in Spring Data repositories.
+
+##### Comparison Summary
+
+| Metric | `JdbcBatchItemWriter` | `JpaItemWriter` | `RepositoryItemWriter` |
+| :--- | :--- | :--- | :--- |
+| **Throughput** | ⚡⚡⚡ **Maximum** (10x+ faster) | ⚡ **Moderate** | ⚡ **Moderate** |
+| **Heap Memory Overhead** | **Near-zero** (scalar streams) | **High** (L1 cache entity graph) | **High** (Spring Data wrapping) |
+| **Cascade Support** | Manual SQL required | **Automatic** (`CascadeType.ALL`) | Dependent on Repository methods |
+| **Recommended Use Case** | Bulk imports, high-speed ETL | Complex domain aggregates | Lightweight utility batch steps |
+
+---
+
+#### 6. Spring Batch Internal Metadata Persistence (JobRepository & Schema)
+
+In addition to business tables, Spring Batch requires a relational database schema to persist job execution history, step metrics, and restart tokens.
+
+##### A. Core Framework Classes
+1. **`JobRepository` (`SimpleJobRepository`)**:
+   - The central transactional data access layer for all Spring Batch metadata.
+   - Handled automatically by Spring Boot's `BatchAutoConfiguration` using the primary `DataSource` and `PlatformTransactionManager`.
+2. **`DefaultBatchConfiguration`**:
+   - The base configuration class in Spring Batch 5+ for customizing the `JobRepository`, transaction isolation level (`ISOLATION_DEFAULT` / `ISOLATION_SERIALIZABLE`), and table prefix.
+
+##### B. The 6 Core Metadata Tables
+Spring Batch maintains strict relational integrity across 6 internal tables:
+
+```
+┌─────────────────────────────────┐
+│       BATCH_JOB_INSTANCE        │ (Represents unique Job Name + JobParameters)
+└────────────────┬────────────────┘
+                 │ 1:N
+┌────────────────▼────────────────┐
+│      BATCH_JOB_EXECUTION        │ (Execution attempt: START_TIME, END_TIME, STATUS, EXIT_CODE)
+├─────────────────────────────────┤
+│  BATCH_JOB_EXECUTION_PARAMS     │ (String, Long, Date key-value parameters passed at launch)
+│  BATCH_JOB_EXECUTION_CONTEXT    │ (Serialized JobExecutionContext for job-level restart state)
+└────────────────┬────────────────┘
+                 │ 1:N
+┌────────────────▼────────────────┐
+│      BATCH_STEP_EXECUTION       │ (Step execution: READ_COUNT, WRITE_COUNT, COMMIT_COUNT, ROLLBACK_COUNT)
+├─────────────────────────────────┤
+│  BATCH_STEP_EXECUTION_CONTEXT   │ (Serialized step state: item offsets, reader positions)
+└─────────────────────────────────┘
+```
+
+##### C. Schema Initialization in Spring Boot
+In `application.properties` / `application.yml`:
+```properties
+# Options: always | embedded (H2/HSQL) | never (production with Flyway/Liquibase)
+spring.batch.jdbc.initialize-schema=always
+
+# Custom table prefix if shared with existing legacy schemas (default: BATCH_)
+spring.batch.jdbc.table-prefix=BATCH_
+```
+* **Production Best Practice**: In enterprise deployments, set `initialize-schema=never` and manage DDL scripts through **Flyway** or **Liquibase** using the official dialect scripts located at `org/springframework/batch/core/schema-postgresql.sql`.
+
+---
+
+#### 7. Threading Model & Execution Mechanics: Synchronous vs. Asynchronous Batch Jobs
+
+A critical architectural question is: **Does Spring Batch run as an asynchronous future, or on the same caller thread?**
+
+##### A. Default Behavior: Synchronous on the Calling Thread
+By default in Spring Batch and Spring Boot auto-configuration, `JobLauncher` (and `JobOperator`) is wired with a `SyncTaskExecutor`:
+* **The REST Controller Trap**: When a controller triggers a job via `jobOperator.start(...)` (as in [`BatchController.java`](file:///Users/luqmansamad/code/feenyx/java-refresher/src/main/java/com/practice/java_refresher/controller/BatchController.java#L60)):
+  * The incoming Tomcat HTTP thread (`http-nio-8080-exec-*`) **blocks and executes the entire batch job synchronously**.
+  * The thread reads items, runs processors, executes chunk transactions, and writes to the database for all 10,000+ items before generating an HTTP response.
+  * **Production Risk**: If the batch job takes 3 minutes, the client HTTP connection remains open for 3 minutes, triggering gateway timeouts (HTTP 504), proxy disconnects, and thread pool exhaustion in Tomcat.
+* **The Startup Trap**: If a job is executed at boot time via `JobLauncherApplicationRunner`, it blocks the `main()` thread, preventing the application from opening health check endpoints until the job finishes.
+
+##### B. Decoupling with Asynchronous Job Launching
+To make job triggering non-blocking and return immediately with an HTTP `202 Accepted`, configure an asynchronous `TaskExecutor` on the `JobLauncher`:
+
+```java
+@Bean
+public JobLauncher asyncJobLauncher(JobRepository jobRepository) throws Exception {
+    TaskExecutorJobLauncher launcher = new TaskExecutorJobLauncher();
+    launcher.setJobRepository(jobRepository);
+    // Asynchronous background execution (or Java 21+ Virtual Threads!)
+    launcher.setTaskExecutor(new SimpleAsyncTaskExecutor());
+    launcher.afterPropertiesSet();
+    return launcher;
+}
+```
+
+**Non-Blocking REST Workflow**:
+1. Client issues `POST /api/batch/import`.
+2. The controller calls `jobOperator.start(...)`, which delegates to the async launcher.
+3. The method returns **immediately** ($<5\text{ms}$) with a `JobExecution` whose status is `STARTING` or `STARTED`.
+4. The client receives an immediate response containing `jobExecutionId`:
+   ```json
+   {
+     "jobExecutionId": 105,
+     "status": "STARTED"
+   }
+   ```
+5. The client subsequently polls `GET /api/batch/status/105` (implemented in [`BatchController.java#L105`](file:///Users/luqmansamad/code/feenyx/java-refresher/src/main/java/com/practice/java_refresher/controller/BatchController.java#L105)) to inspect progress, or registers a webhook via `JobExecutionListener.afterJob()`.
+
+##### C. Threading Inside the Job: Step & Chunk Concurrency
+Even when the job runs on a background thread, what thread model governs internal chunk execution?
+
+```
+                       Job Thread (Async / Sync)
+                               │
+       ┌───────────────────────┼───────────────────────┐
+       ▼                       ▼                       ▼
+  Sequential              Multi-Threaded           Partitioned
+(Default: 1 chunk        (.taskExecutor()         (Master/Worker
+ at a time on 1 thread)    parallel chunks)         across nodes/threads)
+```
+
+1. **Sequential Execution (Default)**:
+   - Chunks run one after another on the single worker thread. Fully deterministic and preserves step restart offsets in `ExecutionContext`.
+2. **Multi-Threaded Steps (`.taskExecutor(taskExecutor)`)**:
+   - Chunks are distributed concurrently across a thread pool:
+     ```java
+     return new StepBuilder("parallelStep", jobRepository)
+             .<ProductCsvDto, Product>chunk(500)
+             .transactionManager(transactionManager)
+             .reader(pagingProductReader)
+             .writer(jdbcProductWriter())
+             .taskExecutor(new ThreadPoolTaskExecutor()) // Concurrent chunk processing!
+             .build();
+     ```
+   > [!CAUTION]
+   > **The Thread-Safety Trap with Readers:**
+   > - Stateful readers like `FlatFileItemReader` and `JdbcCursorItemReader` maintain internal row cursors and are **NOT thread-safe**. If multiple threads invoke `read()` concurrently, data will be skipped, duplicated, or corrupted.
+   > - **Solutions**: Use inherently thread-safe readers such as `JdbcPagingItemReader`, or wrap stateful readers with `SynchronizedItemStreamReader`.
+   > - **Restartability Loss**: Because chunks finish out of order, Spring Batch cannot maintain a sequential pointer in `ExecutionContext`. Multi-threaded steps cannot guarantee safe mid-step restartability.
+
+##### D. Threading Matrix Summary
+
+| Layer | Default Behavior | How to Make Concurrent | Production Considerations |
+| :--- | :--- | :--- | :--- |
+| **Job Launch** | Synchronous on caller thread (`SyncTaskExecutor`) | Inject `TaskExecutor` into `TaskExecutorJobLauncher` | Mandatory for REST API triggers; prevents 504 timeouts. |
+| **Step Flow** | Sequential (`step1 -> step2`) | Use `.split(taskExecutor)` or Parallel Flow | Best for independent data steps (e.g. import users + import products). |
+| **Chunk Processing** | Single thread per step | Add `.taskExecutor()` to `StepBuilder` | Requires thread-safe reader (`JdbcPagingItemReader`); sacrifices restartability. |
 
 ---
 
@@ -742,14 +1076,22 @@ If you mutate 1,000 entities in memory, and then execute a read query on an unre
 
 ---
 
-### Q14: How does Spring Batch handle transaction rollbacks during chunk processing? What is the role of `skip` and `retry`?
+### Q14: What happens if one chunk/batch fails during Spring Batch execution? Are past chunks rolled back, and how does restart work?
 **Answer:**
-In Spring Batch, a chunk step executes with a defined commit interval (e.g. 50 items):
-1. Reads 50 items $\rightarrow$ Processes 50 items $\rightarrow$ Writes 50 items $\rightarrow$ Commits.
-2. If item 48 throws an exception in the writer, the entire transaction of 50 items rolls back.
-3. If **Fault Tolerance / Skip** is configured (`faultTolerant().skip(DataException.class).skipLimit(10)`):
-   - Spring Batch re-scans the chunk **item-by-item** in individual sub-transactions to isolate the exact failing item.
-   - The failing item is logged to step execution metrics (`stepExecution.getFilterCount()`), and the remaining 49 valid items commit successfully.
+1. **Fate of Past Chunks (Permanently Committed):**
+   - Each chunk represents an isolated physical database transaction.
+   - If a job has 20 chunks of 500 items and Chunk 5 fails, **Chunks 1–4 remain safely committed** in the database. Spring Batch never rolls back previously committed transactions.
+2. **Standard Step Failure (No Fault Tolerance):**
+   - The failing chunk's transaction rolls back immediately via `PlatformTransactionManager.rollback()`.
+   - The step and job halt with status `FAILED`, and the stack trace is persisted to `BATCH_STEP_EXECUTION.EXIT_MESSAGE`.
+   - Spring Batch preserves the last successful offset (`commitCount = 4`, `readCount = 2000`) in `BATCH_STEP_EXECUTION_CONTEXT`.
+   - **On Job Restart:** Spring Batch inspects `ExecutionContext`, skips the 2,000 committed records, and resumes directly at Chunk 5 without reprocessing items 1–2000.
+3. **Fault-Tolerant Step Failure (`.faultTolerant().skip(...).skipLimit(...)`):**
+   - The failing chunk rolls back, but instead of failing the job, `FaultTolerantChunkProcessor` enters **scan mode**.
+   - It iterates through the chunk **one item at a time**, executing each in an isolated single-item transaction.
+   - The bad record is caught, incremented in `skipCount`, and discarded (provided `skipCount <= skipLimit`). Valid items in that chunk commit individually.
+   - The job resumes normal chunking for subsequent chunks and completes with status `COMPLETED`.
+   - If `skipLimit` is exceeded, the job aborts as `FAILED`, preserving restart offsets up to the last successful chunk.
 
 ---
 
@@ -793,6 +1135,127 @@ For a modern multi-core server with SSD storage (effective spindle count = 1):
 
 ---
 
+### Q17: In Spring Batch 5+, why is `PlatformTransactionManager` required in `StepBuilder`, and is transaction management completely handled by the builder?
+**Answer:**
+1. **Configuration DSL vs. Execution Engine:**
+   - The `StepBuilder` is only a fluent configuration API; it does **not** execute or manage transactions directly.
+   - At runtime, `StepBuilder` instantiates a `TaskletStep` backed by a `ChunkOrientedTasklet` (or `FaultTolerantChunkProcessor`). The chunk loop is wrapped in a Spring `TransactionTemplate`, which delegates physical connection acquisition, commit, and rollback to the injected `PlatformTransactionManager`.
+2. **Why it became mandatory in Spring Batch 5+:**
+   - In Spring Batch 4 and earlier, `StepBuilderFactory` had the transaction manager autowired invisibly behind the scenes.
+   - Spring Batch 5 deprecated and removed builder factories to eliminate hidden global state and improve modularity. Now, every step builder explicitly requires both the `JobRepository` and `PlatformTransactionManager` via `new StepBuilder("stepName", jobRepository).<I, O>chunk(size).transactionManager(tm)`.
+3. **Dual Role of the Transaction Manager:**
+   - It manages business database operations performed in the step's `ItemWriter`.
+   - It guarantees transactional consistency when updating the Spring Batch `JobRepository` metadata (`BATCH_STEP_EXECUTION` commit count, read count, and `ExecutionContext` serialization), ensuring that metadata updates and business data commits stay perfectly synchronized.
+
+---
+
+### Q18: What happens when a Spring Batch chunk step writes to a non-transactional resource like a file or S3 bucket? How do you ensure consistency on failure?
+**Answer:**
+1. **The Non-Transactional Resource Problem:**
+   - Spring Batch chunk steps still require a `PlatformTransactionManager` (e.g., in `exportDbToJsonStep` using `ProductJsonStreamWriter`) to coordinate the database reader cursor and commit metadata to `BATCH_STEP_EXECUTION`.
+   - However, standard file systems, network streams, and S3 are **non-transactional**. When an unhandled error rolls back the database transaction midway through a chunk, any bytes already flushed to disk or uploaded to S3 **remain written**.
+2. **Mitigation Strategies in Production:**
+   - **Temp File + Atomic Rename Pattern:** Stream output to a temporary staging file (e.g., `output.json.tmp`). In a `StepExecutionListener.afterStep()`, inspect `stepExecution.getStatus()`. If and only if it equals `BatchStatus.COMPLETED`, atomically rename the file to `output.json` via `Files.move(..., StandardCopyOption.ATOMIC_MOVE)`. On failure, delete the `.tmp` file.
+   - **`ItemStream` Offset Restartability:** If appending to files or streaming records, implement `ItemStream.update(ExecutionContext)` to record the file pointer or byte offset at each committed chunk boundary. On job restart, read the offset from `ExecutionContext` and truncate or seek the file back to that exact point before reading resumes.
+   - **Two-Phase Upload for Object Storage:** Stream chunk output to an in-memory buffer or multipart upload parts. Only commit the multipart upload (complete multipart upload API) when the step completes successfully.
+
+---
+
+### Q19: How does Spring Batch's `FaultTolerantChunkProcessor` implement chunk rollback, item scanning, and skip logic under the hood? What are the performance implications?
+**Answer:**
+1. **The Failure and Rollback Phase:**
+   - When a chunk of 500 items is being written by `ItemWriter.write(chunk)` and item 420 fails (e.g., unique constraint violation or malformed data):
+   - The entire transaction of 500 items is rolled back immediately by `PlatformTransactionManager.rollback()`.
+2. **The Item-by-Item Scan Phase:**
+   - Spring Batch detects that `faultTolerant().skip(...)` is enabled and that the exception matches an allowed skip class.
+   - The processor switches to **scan mode**: it iterates through the failed chunk **one item at a time**.
+   - For each item, it opens a brand-new transaction, passes the single item through the `ItemProcessor` and `ItemWriter`, and commits if successful.
+3. **Skip & Error Accounting:**
+   - When it reaches the faulty item 420, an exception is thrown in its isolated single-item transaction.
+   - The single-item transaction rolls back without affecting the preceding 419 items that committed.
+   - The `skipCount` in `StepExecution` increments. If `skipCount <= skipLimit`, the exception is swallowed, and processing resumes with item 421.
+4. **Performance & Concurrency Implications (Interview Trap):**
+   - **Transaction Explosion:** 1 chunk of 500 items normally requires 1 transaction. In the worst-case scan mode, it triggers **501 separate database transactions** (1 failed chunk + 500 individual item transactions).
+   - **Connection Pool & Lock Contention:** Rapid transaction start/commit cycles stress the HikariCP connection pool and database WAL (Write-Ahead Log).
+   - **Best Practice:** Keep `skipLimit` low and log skipped items with a `SkipListener.onSkipInWrite()` to audit and remediate bad data upstream.
+
+---
+
+### Q20: Compare `JdbcBatchItemWriter` vs. `JpaItemWriter` vs. `RepositoryItemWriter` for database writes in Spring Batch. What are their performance implications, and what database schema does Spring Batch require for its own metadata?
+**Staff Answer:**
+1. **Comparing Database ItemWriters:**
+   - **`JdbcBatchItemWriter` (Fastest / Recommended for High Volume):**
+     - Operates directly via JDBC batch prepared statements (`PreparedStatement.addBatch()` / `executeBatch()`).
+     - **Performance Advantage:** Bypasses Hibernate entirely — zero entity state tracking, zero dirty checking snapshots, and minimal memory footprint $O(\text{chunk\_size})$. When paired with driver-level optimizations (PostgreSQL `reWriteBatchedInserts=true`), inserts achieve near-native database ingestion speeds.
+     - **Limitation:** Developers must write explicit SQL and manage relationships manually without ORM cascading.
+   - **`JpaItemWriter` (Rich Domain Aggregates):**
+     - Delegates writes to `EntityManager.merge(item)`.
+     - **Advantage:** Preserves JPA lifecycle annotations, automatic cascade persistence (`@OneToMany(cascade = CascadeType.ALL)`), and entity listeners (`@PrePersist`, `@PreUpdate`).
+     - **Trade-off:** High CPU and memory overhead; maintaining entity snapshots in the 1st-level cache slows down large batch processing.
+   - **`RepositoryItemWriter` (High Abstraction):**
+     - Calls a Spring Data repository method (e.g., `repository.saveAll(chunk)`).
+     - **Advantage:** Reuses established repository business logic and domain validation.
+     - **Trade-off:** Adds abstraction overhead over JPA; rarely suitable for millions of records.
+2. **Spring Batch Internal Metadata Persistence Schema:**
+   - Spring Batch coordinates job execution state across **6 relational tables**:
+     - `BATCH_JOB_INSTANCE`: Immutable record of a unique job name and its identifying `JobParameters`.
+     - `BATCH_JOB_EXECUTION`: Physical execution attempt with start/end timestamps, status (`STARTED`, `COMPLETED`, `FAILED`), and exit codes.
+     - `BATCH_JOB_EXECUTION_PARAMS`: Key-value parameters passed to the job instance.
+     - `BATCH_JOB_EXECUTION_CONTEXT`: Serialized JSON/blob state for job-level restartability.
+     - `BATCH_STEP_EXECUTION`: Metrics per step execution (`read_count`, `write_count`, `commit_count`, `rollback_count`).
+     - `BATCH_STEP_EXECUTION_CONTEXT`: Serialized reader cursor positions and stream offsets enabling mid-job restart after crashes.
+   - Handled via `JobRepository` backed by `PlatformTransactionManager`. In production, set `spring.batch.jdbc.initialize-schema=never` and maintain table DDL scripts via Flyway or Liquibase.
+
+---
+
+### Q21: Does Spring Batch execute asynchronously or on the caller thread by default? How do you prevent a REST controller from hanging during batch job execution, and what are the concurrency traps of multi-threaded steps?
+**Staff Answer:**
+1. **The Default Threading Model (Synchronous on Caller Thread):**
+   - By default, Spring Boot auto-configures `JobLauncher` with a `SyncTaskExecutor`.
+   - When a job is triggered via `jobLauncher.run(job, params)` or `jobOperator.start(job, params)` inside a REST controller, the calling **Tomcat HTTP worker thread executes the entire job synchronously**.
+   - **Architectural Risk:** For large jobs, this blocks the client connection, leading to HTTP 504 Gateway Timeouts, reverse proxy drops, and server thread pool starvation.
+2. **Implementing Non-Blocking REST Ingestion (Async Polling Architecture):**
+   - Configure a custom `JobLauncher` with an asynchronous `TaskExecutor` (e.g. `SimpleAsyncTaskExecutor`, `ThreadPoolTaskExecutor`, or Java 21+ `VirtualThreadTaskExecutor`).
+   - When the controller calls `jobOperator.start(...)`, it returns immediately ($<5\text{ms}$) with a `JobExecution` in `STARTED` state.
+   - The API immediately responds with **HTTP 202 Accepted** returning `{ "jobExecutionId": 105, "status": "STARTED" }`.
+   - The frontend or client periodically polls `GET /api/batch/status/105` to check completion, or receives a notification via WebSocket or webhook on `JobExecutionListener.afterJob()`.
+3. **Concurrency Traps with Multi-Threaded Steps (`.taskExecutor()`):**
+   - **Stateful Reader Race Conditions:** `FlatFileItemReader` and `JdbcCursorItemReader` maintain non-synchronized internal cursor pointers. In a multi-threaded step, concurrent calls to `read()` produce duplicate processing or missing records.
+   - **The Fix:** Use thread-safe paging readers like `JdbcPagingItemReader`, or wrap the reader in `SynchronizedItemStreamReader`.
+   - **Loss of Restartability:** In a multi-threaded step, chunks complete out of order. Because execution is non-deterministic, Spring Batch cannot record a single sequential offset in the `ExecutionContext`. If the step fails, it cannot be safely restarted from the exact failure point.
+
+---
+
+### Q22: How do you design a secure, high-throughput file download endpoint in Spring Boot for large artifacts generated by batch processing without risking OutOfMemoryError or security vulnerabilities?
+**Staff Answer:**
+1. **The Heap Memory Trap (Returning `byte[]`):**
+   - Declaring an endpoint like `@GetMapping byte[] download()` reads the whole file into Java heap memory.
+   - If 10 concurrent users download a 500 MB batch export file, 5 GB of memory is allocated simultaneously, triggering severe GC pauses and `OutOfMemoryError: Java heap space`.
+2. **The High-Performance Solution (`ResponseEntity<Resource>`):**
+   - Return `ResponseEntity<Resource>` wrapping a `FileSystemResource(file)`.
+   - Spring MVC delegates directly to the underlying NIO channel (`FileChannel.transferTo()`), allowing the operating system to perform **zero-copy transfer** from the file cache directly to the network socket descriptor without loading file bytes into JVM user-space memory.
+   - Alternatively, for dynamic streaming directly from an external source or database cursor, use `StreamingResponseBody` or `ResponseBodyEmitter`.
+3. **Preventing Path Traversal Vulnerabilities (CWE-22):**
+   - Accepting raw file paths from query parameters (e.g. `?filePath=...`) allows attackers to pass relative sequences (`../../etc/passwd` or `../../application.yml`).
+   - **Remediation**: Always convert both the root directory and the target path to absolute normalized `java.nio.file.Path` instances, and strictly enforce containment:
+     ```java
+     Path baseDir = Paths.get("data").toAbsolutePath().normalize();
+     Path target = Paths.get(inputPath).toAbsolutePath().normalize();
+     if (!target.startsWith(baseDir)) {
+         throw new SecurityException("Path traversal attempt detected");
+     }
+     ```
+4. **Metadata Correlation with Spring Batch `JobRepository`:**
+   - Rather than relying on static file paths, accept `jobExecutionId`.
+   - Look up the `JobExecution` from `JobRepository.getJobExecution(id)` and retrieve the dynamic file path stored in `JobParameters` (`outputJsonPath`).
+   - This ensures clients only download authenticated, verified output artifacts created by legitimate batch runs.
+5. **Mandatory HTTP Headers:**
+   - `Content-Disposition: attachment; filename="..."` (instructs the user-agent to save the file rather than execute/render it inline).
+   - `Content-Length` (allows download progress bars and HTTP range requests).
+   - `Content-Type: application/json` or `application/octet-stream`.
+
+---
+
 ## 7. The Master Study Curriculum & Interview Topic Checklist
 
 Use this structured syllabus to systematically review and master advanced Spring, data architectures, and distributed systems before your interview.
@@ -829,9 +1292,17 @@ Use this structured syllabus to systematically review and master advanced Spring
 
 ### 📌 Tier 4: Spring Batch & High-Throughput Pipelines
 - [ ] **Architecture:** `Job`, `Step`, `JobRepository`, and `JobOperator` (Spring Batch 6 replacement for deprecated `JobLauncher` and `JobExplorer`).
+- [ ] **Threading Model:** Default synchronous `SyncTaskExecutor` vs async `TaskExecutorJobLauncher` (Virtual Threads).
+- [ ] **Non-Blocking REST Ingestion:** HTTP 202 Accepted polling architecture and `JobOperator` status inspection.
+- [ ] **Database ItemWriters:** `JdbcBatchItemWriter` (raw SQL batching) vs `JpaItemWriter` (EntityManager merge) vs `RepositoryItemWriter`.
+- [ ] **Metadata Persistence Schema:** The 6 core tables (`BATCH_JOB_INSTANCE`, `BATCH_JOB_EXECUTION`, `BATCH_STEP_EXECUTION`, etc.) and `initialize-schema` configuration.
 - [ ] **Chunk-Oriented Processing:** `ItemReader` $\rightarrow$ `ItemProcessor` $\rightarrow$ `ItemWriter` transaction boundary.
+- [ ] **Transaction Demarcation:** Role of `PlatformTransactionManager` in `StepBuilder` vs `TaskletStep` runtime execution.
+- [ ] **Non-Transactional Resources:** Handling file I/O, S3, and streaming consistency with temp file atomic renames and `ItemStream` offsets.
 - [ ] **Restartability:** How `ExecutionContext` records chunk commit counts to resume mid-job after a server crash.
-- [ ] **Fault Tolerance:** `skip()`, `skipLimit()`, `retry()`, and item-by-item rollback recovery.
+- [ ] **Fault Tolerance:** `skip()`, `skipLimit()`, `retry()`, item-by-item rollback recovery, and transaction explosion overhead.
+- [ ] **Multi-Threaded Step Concurrency:** Reader thread-safety (`JdbcPagingItemReader` vs `SynchronizedItemStreamReader`) and non-deterministic restartability loss.
+- [ ] **Batch Artifact Streaming:** Secure large file downloads with `FileSystemResource`, zero-copy OS transfers, and directory traversal safeguards (`Path.startsWith`).
 - [ ] **Scaling Batch:** Multi-threaded steps, partitioning (`Partitioner`), and remote chunking via Kafka.
 
 ### 📌 Tier 5: Cloud Identity, OAuth2 Resource Server & OIDC SSO

@@ -74,6 +74,9 @@
                 <p style="margin-top: 0.5rem; font-size: 0.9rem;">
                     Both steps finished: CSV rows were streamed & committed to PostgreSQL in chunks of 500, then streamed out from PostgreSQL directly into <code>data/exported_products.json</code>! Check your terminal logs for the live commit sequence.
                 </p>
+                <div style="margin-top: 0.75rem;">
+                    <a th:href="@{/api/batch/download(jobExecutionId=${jobId})}" class="btn-run" style="text-decoration: none; padding: 0.45rem 1rem; font-size: 0.85rem; display: inline-flex; align-items: center; gap: 0.35rem; background: #059669;">⬇ Download Exported JSON File</a>
+                </div>
             </div>
 
             <form th:action="@{/web/batch/run}" method="post" style="display: flex; gap: 1rem; align-items: center; flex-wrap: wrap;">
@@ -117,7 +120,10 @@
                 </div>
                 <div class="file-status">
                     <span>Output File: <code>data/exported_products.json</code></span>
-                    <span th:if="${jsonExists}" class="status-badge status-ready" th:text="${jsonSizeKb} + ' KB (Generated)'">Generated</span>
+                    <span th:if="${jsonExists}" style="display: flex; align-items: center; gap: 0.5rem;">
+                        <span class="status-badge status-ready" th:text="${jsonSizeKb} + ' KB (Generated)'">Generated</span>
+                        <a href="/api/batch/download" style="text-decoration: none; font-size: 0.85rem; font-weight: 600; color: var(--primary);" download>⬇ Download</a>
+                    </span>
                     <span th:if="${!jsonExists}" class="status-badge status-missing">Pending Execution</span>
                 </div>
             </div>
