@@ -72,7 +72,7 @@
                 <h3 style="margin-bottom: 0.25rem;">Batch Pipeline Executed Successfully!</h3>
                 <p>Job Execution ID: <strong th:text="${jobId}">1</strong> | Status: <strong th:text="${status}">COMPLETED</strong></p>
                 <p style="margin-top: 0.5rem; font-size: 0.9rem;">
-                    Both steps finished: CSV rows were streamed & committed to PostgreSQL in chunks of 50, then streamed out from PostgreSQL directly into <code>data/exported_products.json</code>! Check your terminal logs for the live commit sequence.
+                    Both steps finished: CSV rows were streamed & committed to PostgreSQL in chunks of 500, then streamed out from PostgreSQL directly into <code>data/exported_products.json</code>! Check your terminal logs for the live commit sequence.
                 </p>
             </div>
 
@@ -81,8 +81,8 @@
                 <div>
                     <label for="inputCsvPath" style="display: block; font-size: 0.85rem; font-weight: 600; color: var(--muted); margin-bottom: 0.25rem;">Select Dataset File:</label>
                     <select id="inputCsvPath" name="inputCsvPath" style="padding: 0.65rem 0.85rem; border: 1px solid var(--border); border-radius: 6px; font-size: 0.95rem; background: white;">
-                        <option value="data/products_large.csv">data/products_large.csv (2,000 products - 40 chunks)</option>
-                        <option value="data/products_10k.csv">data/products_10k.csv (10,000 products - 200 chunks)</option>
+                        <option value="data/products_10k.csv" selected>data/products_10k.csv (10,000 products - 20 chunks of 500)</option>
+                        <option value="data/products_large.csv">data/products_large.csv (2,000 products - 4 chunks of 500)</option>
                     </select>
                 </div>
                 <div style="margin-top: 1.25rem;">
@@ -95,13 +95,13 @@
             <div class="card">
                 <h3><span class="step-num">1</span> Step 1: Ingest Large CSV to PostgreSQL</h3>
                 <p style="font-size: 0.9rem; color: var(--muted); margin-bottom: 0.75rem;">
-                    Reads a large CSV line-by-line using <code>FlatFileItemReader</code>, applies validation in <code>ItemProcessor</code>, and writes in chunks of 50 via <code>JpaItemWriter</code>.
+                    Reads a large CSV line-by-line using <code>FlatFileItemReader</code>, applies validation in <code>ItemProcessor</code>, and writes in chunks of 500 via <code>JdbcBatchItemWriter</code>.
                 </p>
                 <div class="flow-diagram">
-                    Large CSV (2,000 rows) &rarr; Stream line &rarr; Validate &rarr; [Chunk = 50 items] &rarr; Commit TX to DB &rarr; Repeat
+                    Large CSV (10,000 rows) &rarr; Stream line &rarr; Validate &rarr; [Chunk = 500 items] &rarr; Commit TX to DB &rarr; Repeat
                 </div>
                 <div class="file-status">
-                    <span>Input File: <code>data/products_large.csv</code></span>
+                    <span>Input File: <code>data/products_10k.csv</code></span>
                     <span th:if="${csvExists}" class="status-badge status-ready" th:text="${csvSizeKb} + ' KB (Ready)'">Ready</span>
                     <span th:if="${!csvExists}" class="status-badge status-missing">Auto-generates on run</span>
                 </div>
@@ -110,10 +110,10 @@
             <div class="card">
                 <h3><span class="step-num">2</span> Step 2: Extract DB & Stream to JSON</h3>
                 <p style="font-size: 0.9rem; color: var(--muted); margin-bottom: 0.75rem;">
-                    Queries PostgreSQL using <code>JpaPagingItemReader</code> in pages of 50, enriches the records, and streams them into a formatted JSON array using <code>ProductJsonStreamWriter</code>.
+                    Queries PostgreSQL using <code>JdbcCursorItemReader</code>, enriches the records, and streams them in chunks of 500 into a formatted JSON array using <code>ProductJsonStreamWriter</code>.
                 </p>
                 <div class="flow-diagram">
-                    PostgreSQL (Paged Cursor) &rarr; Enrich DTO &rarr; [Chunk = 50 items] &rarr; Stream to JSON file &rarr; Repeat
+                    PostgreSQL (Streaming Cursor) &rarr; Enrich DTO &rarr; [Chunk = 500 items] &rarr; Stream to JSON file &rarr; Repeat
                 </div>
                 <div class="file-status">
                     <span>Output File: <code>data/exported_products.json</code></span>
@@ -126,18 +126,18 @@
         <div class="card">
             <h3>Understanding Chunking and Transactions</h3>
             <p style="font-size: 0.95rem; color: var(--muted);">
-                In Spring Batch, a chunk size of <strong>50</strong> means the framework loops:
-                read 1 item &rarr; process 1 item until 50 items are accumulated. Then it opens a database transaction, calls the <code>ItemWriter</code> with the 50 items, commits the transaction, and releases memory. If row 1,452 fails, only chunk 30 rolls back—the previous 1,400 rows are already safely committed!
+                In Spring Batch, a chunk size of <strong>500</strong> means the framework loops:
+                read 1 item &rarr; process 1 item until 500 items are accumulated. Then it opens a database transaction, calls the <code>ItemWriter</code> with the 500 items (using batch insert), commits the transaction, and releases memory. If an error occurs in a chunk, only that chunk of 500 rolls back—the previously committed chunks are already safely persisted!
             </p>
 
             <div class="terminal-box">
                 <span class="term-yellow">>>> [TRANSACTION START] [importCsvToDbStep] Processing chunk #1 (Thread: main)</span><br/>
-                <span class="term-green"><<< [TRANSACTION COMMIT] [importCsvToDbStep] Chunk #1 successfully committed! Items Read: 50, Items Written: 50</span><br/>
+                <span class="term-green"><<< [TRANSACTION COMMIT] [importCsvToDbStep] Chunk #1 successfully committed! (Items Written: 500)</span><br/>
                 <span class="term-yellow">>>> [TRANSACTION START] [importCsvToDbStep] Processing chunk #2 (Thread: main)</span><br/>
-                <span class="term-green"><<< [TRANSACTION COMMIT] [importCsvToDbStep] Chunk #2 successfully committed! Items Read: 100, Items Written: 100</span><br/>
+                <span class="term-green"><<< [TRANSACTION COMMIT] [importCsvToDbStep] Chunk #2 successfully committed! (Items Written: 500)</span><br/>
                 ...<br/>
-                <span class="term-blue">🚀 Step 1 Complete: 2,000 items committed across 40 distinct database transactions.</span><br/>
-                <span class="term-blue">🚀 Step 2 Complete: 2,000 items exported chunk-by-chunk into data/exported_products.json</span>
+                <span class="term-blue">🚀 Step 1 Complete: 10,000 items committed across 20 distinct database transactions of 500 items.</span><br/>
+                <span class="term-blue">🚀 Step 2 Complete: 10,000 items exported chunk-by-chunk into data/exported_products.json</span>
             </div>
         </div>
     </div>

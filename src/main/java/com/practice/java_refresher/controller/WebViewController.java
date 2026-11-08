@@ -219,10 +219,13 @@ public class WebViewController {
 
     // --- SPRING BATCH DEMO ---
 
-    @GetMapping("/web/batch")
+        @GetMapping("/web/batch")
     public String batchDashboard(Model model, HttpSession session) {
         model.addAttribute("cart", cartService.getCart(session));
-        java.io.File csvFile = new java.io.File("data/products_large.csv");
+        java.io.File csvFile = new java.io.File("data/products_10k.csv");
+        if (!csvFile.exists()) {
+            csvFile = new java.io.File("data/products_large.csv");
+        }
         java.io.File jsonFile = new java.io.File("data/exported_products.json");
 
         model.addAttribute("csvExists", csvFile.exists());
@@ -233,7 +236,7 @@ public class WebViewController {
     }
 
     @PostMapping("/web/batch/run")
-    public String runBatchDemo(@RequestParam(defaultValue = "data/products_large.csv") String inputCsvPath,
+    public String runBatchDemo(@RequestParam(defaultValue = "data/products_10k.csv") String inputCsvPath,
                                RedirectAttributes redirectAttributes) {
         try {
             java.io.File csvFile = new java.io.File(inputCsvPath);

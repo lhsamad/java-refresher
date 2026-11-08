@@ -23,6 +23,7 @@ import org.springframework.batch.infrastructure.item.file.builder.FlatFileItemRe
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.Primary;
 import org.springframework.core.io.FileSystemResource;
 import org.springframework.transaction.PlatformTransactionManager;
 
@@ -31,7 +32,7 @@ import javax.sql.DataSource;
 @Configuration
 public class BatchJobConfig {
 
-    public static final int CHUNK_SIZE = 50;
+    public static final int CHUNK_SIZE = 500;
 
     private final JobRepository jobRepository;
     private final PlatformTransactionManager transactionManager;
@@ -64,7 +65,7 @@ public class BatchJobConfig {
     @Bean
     @StepScope
     public FlatFileItemReader<ProductCsvDto> csvProductReader(
-            @Value("#{jobParameters['inputCsvPath'] ?: 'data/products_large.csv'}") String inputCsvPath) {
+            @Value("#{jobParameters['inputCsvPath'] ?: 'data/products_10k.csv'}") String inputCsvPath) {
         return new FlatFileItemReaderBuilder<ProductCsvDto>()
                 .name("csvProductReader")
                 .resource(new FileSystemResource(inputCsvPath))
@@ -146,10 +147,26 @@ public class BatchJobConfig {
     }
 
     // =========================================================================
-    // THE OVERALL BATCH PIPELINE JOB
+    // BATCH JOBS
     // =========================================================================
 
+    /**
+     * Dedicated batch job to import products from CSV into the database products table.
+     * Inserts products in chunks of 500 items at a time within fixed-size transactions.
+     */
     @Bean
+    public Job importProductsJob(Step importCsvToDbStep) {
+        return new JobBuilder("importProductsJob", jobRepository)
+                .listener(jobCompletionListener)
+                .start(importCsvToDbStep)
+                .build();
+    }
+
+    /**
+     * Two-step pipeline job: Ingest CSV into DB (chunks of 500), then stream DB to JSON.
+     */
+    @Bean
+    @Primary
     public Job productPipelineJob(Step importCsvToDbStep, Step exportDbToJsonStep) {
         return new JobBuilder("productPipelineJob", jobRepository)
                 .listener(jobCompletionListener)
