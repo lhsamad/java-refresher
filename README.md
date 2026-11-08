@@ -460,21 +460,26 @@ The project includes unit and integration tests covering business services, cont
 
 ## Postman Collection
 
-A complete, import-ready Postman collection is located at [`postman_collection.json`](postman_collection.json) in the project root.
+A complete, import-ready Postman collection and environment are located at:
+- **Collection:** [`postman_collection.json`](postman_collection.json)
+- **Environment:** [`postman_environment.json`](postman_environment.json)
 
 ### How to Use:
 1. Open **Postman**.
-2. Click **Import** &rarr; select [`postman_collection.json`](postman_collection.json).
-3. **Automated Token Generation (No copy-pasting required!)**:
-   - Go to folder **`0. Authentication (Token Generation)`**.
-   - Click **Send** on **`Generate User Token (user / user123)`** &rarr; Postman's test script automatically parses `access_token` and populates the `{{userToken}}` variable!
-   - Click **Send** on **`Generate Admin Token (admin / admin123)`** &rarr; Postman automatically populates the `{{adminToken}}` variable!
-4. **End-to-End Workflow**:
-   - Run **`2. Products Admin CRUD -> Create Product (Admin)`**: Creates a product and automatically sets `{{productId}}`.
-   - Run **`3. Customer Orders -> Place Order (Checkout)`**: Uses `{{userToken}}` and `{{productId}}`, and automatically captures the returned `orderNumber` into `{{orderNumber}}`.
+2. Click **Import** &rarr; select **both** `postman_collection.json` and `postman_environment.json`.
+3. In the top-right environment selector in Postman, choose **`E-Commerce Local Dev`**.
+4. **Automated Token Generation (No copy-pasting required!)**:
+   - Go to folder **`0. Authentication & Registration`**.
+   - Click **Send** on **`Generate User Token (user / user123)`** &rarr; Postman automatically captures `access_token` and syncs it to both `{{userToken}}` and `{{bearerToken}}` in your active environment and collection!
+   - Click **Send** on **`Generate Admin Token (admin / admin123)`** &rarr; Postman automatically syncs it to `{{adminToken}}` and `{{bearerToken}}`!
+5. **End-to-End Workflow**:
+   - Run **`2. Products Admin CRUD -> Create Product (Admin)`**: Uses `{{adminToken}}`, creates a product, and automatically saves `{{productId}}`.
+   - Run **`3. Customer Orders -> Place Order (Checkout)`**: Uses `{{userToken}}` and `{{productId}}`, and automatically captures `{{orderNumber}}`.
    - Run **`3. Customer Orders -> Get Order By Order Number`**: Instantly resolves `{{orderNumber}}`.
-   - Run **`4. Admin Orders -> Update Order Status (Admin)`**: Uses `{{adminToken}}` to mark `{{orderNumber}}` as `SHIPPED` or `CANCELLED`.
-   - Run **`5. User Profile -> Get Authenticated User Profile`**: Returns user profile and roles for the active `{{userToken}}`.
+   - Run **`4. Admin Orders -> Update Order Status (Admin)`**: Uses `{{adminToken}}` to transition `{{orderNumber}}` (e.g. to `SHIPPED`).
+   - Run **`5. User Profile -> Get Authenticated User Profile`**: Resolves `{{userToken}}` and inspects claims and Keycloak realm roles.
+   - Run **`6. Spring Batch Pipeline -> Trigger Full Batch Pipeline`**: Launches the streaming batch pipeline and automatically captures `{{jobExecutionId}}`.
+   - Run **`6. Spring Batch Pipeline -> Get Batch Job Status & Metrics`**: Directly queries `{{jobExecutionId}}` metrics.
 
 ---
 
