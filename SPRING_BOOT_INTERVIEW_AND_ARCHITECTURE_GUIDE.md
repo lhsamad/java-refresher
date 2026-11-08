@@ -10,7 +10,7 @@
 3. [Deep Dive 2: Multi-Database Coordination & Distributed Transactions (2PC vs. Sagas)](#3-deep-dive-2-multi-database-coordination--distributed-transactions-2pc-vs-sagas)
 4. [Deep Dive 3: Managing Large Datasets, High-Throughput Ingestion & Memory Optimization](#4-deep-dive-3-managing-large-datasets-high-throughput-ingestion--memory-optimization)
 5. [Deep Dive 4: Concurrency, Locking Strategies & Database Anomalies](#5-deep-dive-4-concurrency-locking-strategies--database-anomalies)
-6. [Comprehensive Senior & Staff Interview Q&A Bank (22 Deep Scenarios)](#6-comprehensive-senior--staff-interview-qa-bank)
+6. [Comprehensive Senior & Staff Interview Q&A Bank (27 Deep Scenarios)](#6-comprehensive-senior--staff-interview-qa-bank)
 7. [The Master Study Curriculum & Interview Topic Checklist](#7-the-master-study-curriculum--interview-topic-checklist)
 
 ---
@@ -916,7 +916,7 @@ Enables multiple worker pods to poll a database table as a queue without blockin
 
 ---
 
-## 6. Comprehensive Senior & Staff Interview Q&A Bank
+## 6. Comprehensive Senior & Staff Interview Q&A Bank (27 Deep Scenarios)
 
 ### Q1: You have a Spring Boot service that must write to both PostgreSQL and an external MySQL database in the same method. How do you design this reliably without 2PC/XA?
 **Staff Answer:**
@@ -1256,6 +1256,123 @@ For a modern multi-core server with SSD storage (effective spindle count = 1):
 
 ---
 
+### Q23: What happens when a service method has no `@Transactional` annotation? Are operations auto-committed, and how does Spring Data JPA alter this behavior?
+**Staff Answer:**
+1. **Underlying Database & JDBC Connection Layer:**
+   - Physical connections checked out from HikariCP default to `autoCommit = true`.
+   - Without `@Transactional`, Spring establishes no AOP transaction boundary and does not invoke `connection.setAutoCommit(false)`.
+   - At the raw JDBC/SQL level, each statement sent to the database commits immediately upon execution.
+2. **The Spring Data JPA Repository Nuance (`SimpleJpaRepository`):**
+   - Even if the calling service method omits `@Transactional`, Spring Data JPA repository implementations are pre-annotated:
+     - Class-level: `@Transactional(readOnly = true)`
+     - Modifying methods (`save`, `saveAll`, `delete`, `deleteAll`): `@Transactional`
+   - **Consequence:** Calling `orderRepository.save(order)` followed by `paymentRepository.save(payment)` creates **two completely independent transactions**.
+   - If `paymentRepository.save()` throws an exception, `order` has already been committed to PostgreSQL. **There is zero cross-repository rollback or atomicity.**
+3. **Hibernate Persistence Context & Dirty Checking Breakdown:**
+   - Without a service-level transaction, there is no shared transactional persistence context spanning the method.
+   - **Dirty checking does not work:** Mutating a managed entity (`user.setName("Alice")`) will **not** trigger an automatic SQL `UPDATE` on method return. You must explicitly invoke `userRepository.save(user)`.
+   - Re-querying an entity inside the same method misses out on transactional first-level cache guarantees, potentially re-fetching data from the database.
+   - Accessing lazy-loaded associations outside a transaction will trigger `LazyInitializationException` unless OSIV (`spring.jpa.open-in-view=true`) is active.
+
+---
+
+### Q24: Are `@Transactional(readOnly = true)` calls genuine database transactions? Why do read-only operations need transactions, and what database/ORM optimizations occur?
+**Staff Answer:**
+1. **Yes, they are genuine, physical transactions:**
+   - A read-only transaction is not a mock or no-op. It coordinates ACID guarantees—specifically **Consistency** and **Isolation**.
+2. **Transactional Consistency Across Multiple Queries:**
+   - If a service method executes two read queries (e.g., `userRepo.findById(id)` followed by `orderRepo.findByUserId(id)`):
+   - Without a transaction, each query runs in auto-commit mode. Concurrent writes committed between the two queries can result in **non-repeatable reads** or **phantom reads**, giving the caller an inconsistent view of the system.
+   - Inside `@Transactional(readOnly = true)`, the database enforces snapshot isolation, guaranteeing that all queries see the exact same point in time.
+3. **JPA & Hibernate Level Optimizations:**
+   - **Flush Mode Set to Manual:** Hibernate sets `FlushMode.MANUAL` (or `FlushMode.NEVER`). Hibernate will not execute premature flushes before running queries.
+   - **Dirty Checking Snapshot Suppression:** Normally, Hibernate creates an in-memory snapshot of every loaded entity to detect modifications at commit time. With `readOnly = true`, Hibernate skips or minimizes snapshot tracking, saving substantial CPU cycles and JVM heap memory.
+4. **Database Engine & Driver Level Optimizations:**
+   - Calling `connection.setReadOnly(true)` signals the JDBC driver and database engine that no mutations will occur.
+   - PostgreSQL and Oracle skip allocating heavy transaction IDs (TXIDs) and avoid acquiring rollback segment space.
+   - **Read-Replica Routing:** In master-replica architectures (e.g., AWS Aurora, or Spring's `AbstractRoutingDataSource`), the transaction manager automatically routes `readOnly = true` connections to **read-only database replicas**, shielding the primary write node from heavy reporting load.
+
+---
+
+### Q25: What does `@Autowired @Lazy` mean at an injection point? How does Spring's dynamic proxy mechanism break circular dependencies and solve the self-invocation proxy bypass?
+**Staff Answer:**
+1. **Dynamic Proxy Injection Mechanism:**
+   - By default, Spring singletons are created eagerly at startup.
+   - When `@Lazy` is combined with `@Autowired` (on a field or constructor parameter), Spring does **not** instantiate the target bean during application startup.
+   - Instead, Spring injects a **dynamic proxy** (CGLIB or JDK dynamic proxy).
+   - The real target bean is constructed and initialized only when a method on the injected proxy is invoked for the first time.
+2. **Primary Use Cases:**
+   - **Breaking Circular Dependencies:** If `ServiceA` requires `ServiceB` and `ServiceB` requires `ServiceA`, constructor injection creates an unresolvable initialization deadlock (`BeanCurrentlyInCreationException`). Placing `@Lazy` on one constructor parameter allows Spring to inject a proxy and complete startup.
+   - **Startup Latency Optimization:** For heavy beans that consume significant memory, open expensive remote sockets, or load large models, `@Lazy` defers creation until actual runtime demand.
+   - **Resolving the AOP Self-Invocation Trap:**
+     ```java
+     @Service
+     public class OrderService {
+         @Autowired @Lazy private OrderService self;
+
+         public void outer() {
+             self.innerTransactional(); // Routes through proxy; @Transactional executes!
+         }
+
+         @Transactional
+         public void innerTransactional() { ... }
+     }
+     ```
+3. **Architectural Trade-offs & Production Risks:**
+   - **Masks Bad Architecture:** Circular dependencies usually signal poor domain boundary separation. Relying on `@Lazy` can perpetuate architectural debt.
+   - **Deferred Runtime Failures:** Configuration bugs or connection errors in lazy beans will not surface at application startup; they fail unexpectedly under real user traffic in production.
+
+---
+
+### Q26: How does `@EntityGraph` solve the N+1 query problem in Spring Data JPA? Compare `attributePaths` vs. Named Entity Graphs, and explain the critical distinction between `EntityGraphType.FETCH` and `EntityGraphType.LOAD`.
+**Staff Answer:**
+1. **The N+1 Query Problem:**
+   - Defining relationships as `FetchType.LAZY` (best practice) causes `findAll()` on 100 entities to trigger 1 query for the parent records, plus 100 individual queries when iterating child collections ($1 + N$).
+   - Changing mappings to `FetchType.EAGER` is an anti-pattern that creates global performance degradation and Cartesian product queries.
+2. **How `@EntityGraph` Solves It:**
+   - Overrides the entity fetch plan dynamically on a **per-query basis**.
+   - Instructs Hibernate to execute an SQL `LEFT OUTER JOIN` fetching parent and child entities in **one single database round-trip**, without altering global entity definitions.
+3. **Ad-Hoc `attributePaths` vs. `@NamedEntityGraph`:**
+   - **Ad-Hoc (`attributePaths = {"orders", "orders.items"}`):** Defined directly on repository methods. Fast, maintainable, supports nested associations, and requires zero entity boilerplate.
+   - **`@NamedEntityGraph`:** Declared on the `@Entity` class and referenced by name in the repository (`@EntityGraph("User.orders")`). Reusable across multiple repositories.
+4. **`EntityGraphType.FETCH` vs. `EntityGraphType.LOAD` (Critical Interview Distinction):**
+   - **`FETCH` (Default):**
+     - Attributes explicitly specified in the graph are fetched **EAGERLY**.
+     - All attributes **not** specified in the graph are treated as **LAZY**, even if they are defined as `FetchType.EAGER` on the entity class.
+   - **`LOAD`:**
+     - Attributes explicitly specified in the graph are fetched **EAGERLY**.
+     - Attributes **not** specified in the graph revert to their **default entity mapping definitions** (`LAZY` remains `LAZY`, `EAGER` remains `EAGER`).
+5. **Advantages Over JPQL `JOIN FETCH`:**
+   - `@EntityGraph` works directly with built-in Spring Data repository methods (`findAll()`, `findById()`) and derived query methods (`findByStatus(...)`) without having to write full JPQL strings.
+   - Integrates cleanly with Spring Data `Pageable` and specifications.
+
+---
+
+### Q27: Detail Hibernate's caching hierarchy: First-Level (L1), Second-Level (L2), and Query Cache. What is stored in each tier, how is cache invalidation handled, and what are the concurrency pitfalls?
+**Staff Answer:**
+1. **The Three Caching Tiers:**
+   - **First-Level Cache (L1 - Session / EntityManager):**
+     - **Scope:** Bound to the current Hibernate `Session` / Spring transaction thread.
+     - **Status:** Mandatory and **always enabled**; cannot be disabled.
+     - **What it stores:** Full, live Java entity object references within the Persistence Context.
+     - **Purpose:** Guarantees repeatable reads within a session (`entityA == entityB`), prevents duplicate queries for the same ID, and enables dirty checking via baseline state snapshots.
+   - **Second-Level Cache (L2 - SessionFactory / Application / Cluster):**
+     - **Scope:** Shared across **all sessions, users, and threads** across the JVM or distributed cluster (e.g., Ehcache, Infinispan, Hazelcast, Redisson).
+     - **Status:** **Disabled by default**. Requires `@Cacheable` and explicit configuration.
+     - **What it stores:** **Dehydrated state** (raw arrays of primitive/column data tuples like `[1, "Order-X", 49.99]`), not live Java objects. Each session inflates new entity instances from these tuples.
+     - **Concurrency Strategies:** `READ_ONLY` (immutable data), `NONSTRICT_READ_WRITE` (infrequent writes), `READ_WRITE` (soft locks during updates), `TRANSACTIONAL` (JTA 2PC coordination).
+   - **Query Cache (Specialized L2 Subsystem):**
+     - **Scope:** Shared across sessions; requires L2 to be active.
+     - **Status:** **Disabled by default**.
+     - **What it stores:** The exact JPQL query string + parameter values as the cache key, and a **list of matching Entity IDs** (`[101, 102, 105]`) as the value.
+     - **Lookup Mechanics:** On a query cache hit, Hibernate retrieves the IDs, and then fetches the actual entity states from the **L2 cache**.
+2. **Cache Invalidation & Production Traps:**
+   - **Query Cache Invalidation Penalty:** If *any* insert, update, or delete occurs on a table, Hibernate **invalidates the entire query cache region for that table**. In write-heavy environments, enabling the query cache causes severe CPU churn and cache thrashing.
+   - **Direct SQL / Native Queries:** Native queries (`@Query(nativeQuery = true)`) or external database updates bypass Hibernate's persistence context, causing the L2 and Query caches to become stale unless explicitly evicted via `CacheManager` or `@Modifying(clearAutomatically = true)`.
+   - **L2 Cache Sizing:** Best reserved strictly for **read-heavy, slowly-changing lookup tables** (e.g., countries, roles, currency rates, tax categories).
+
+---
+
 ## 7. The Master Study Curriculum & Interview Topic Checklist
 
 Use this structured syllabus to systematically review and master advanced Spring, data architectures, and distributed systems before your interview.
@@ -1268,11 +1385,16 @@ Use this structured syllabus to systematically review and master advanced Spring
 - [ ] **Rollback Mechanics:** Why checked exceptions don't roll back by default; using `rollbackFor = Exception.class` and `noRollbackFor`.
 - [ ] **ThreadLocal Management:** How `TransactionSynchronizationManager` binds connections to execution threads.
 - [ ] **Delayed Checkout:** How `LazyConnectionDataSourceProxy` defers connection acquisition until the first statement execution.
+- [ ] **Auto-Commit & Missing `@Transactional`:** JDBC connection defaults vs. `SimpleJpaRepository` method-level transactions; loss of cross-repo atomicity.
+- [ ] **Read-Only Transactions:** Why `@Transactional(readOnly = true)` opens real DB transactions; snapshot consistency, `FlushMode.MANUAL`, and replica routing.
+- [ ] **`@Autowired @Lazy` Injection:** Dynamic proxy generation at injection points, breaking circular dependencies, and proxy self-invocation.
 
 ### 📌 Tier 2: Database Performance, Concurrency & Locking
 - [ ] **Dirty Checking Internals:** Why `@Transactional(readOnly = true)` suppresses entity snapshots in Hibernate.
 - [ ] **Hibernate 1st-Level Cache:** Why iterating large datasets causes `OutOfMemoryError` and how `entityManager.clear()` fixes it.
 - [ ] **`StatelessSession`:** Bypassing the persistence context, dirty checking, and event listeners for ultra-fast bulk operations.
+- [ ] **Hibernate Caching Hierarchy:** L1 (Session/live entities) vs. L2 (SessionFactory/dehydrated tuples) vs. Query Cache (key-to-ID mapping) and invalidation penalties.
+- [ ] **`@EntityGraph` Fetching:** Solving N+1 queries via SQL `LEFT JOIN`, `attributePaths` vs. `@NamedEntityGraph`, and `EntityGraphType.FETCH` vs. `LOAD`.
 - [ ] **JDBC Batching:** Configuring `hibernate.jdbc.batch_size`, `order_inserts`, `order_updates`, and JDBC driver flags (`reWriteBatchedInserts=true`).
 - [ ] **Primary Key Pitfall:** Why `GenerationType.IDENTITY` disables JDBC batching and why `SEQUENCE` or `UUID` is required.
 - [ ] **Isolation Levels:** Dirty Reads, Non-Repeatable Reads, Phantom Reads, and how MVCC prevents anomalies in PostgreSQL.

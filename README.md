@@ -480,8 +480,10 @@ A complete, import-ready Postman collection and environment are located at:
    - Run **`3. Customer Orders -> Get Order By Order Number`**: Instantly resolves `{{orderNumber}}`.
    - Run **`4. Admin Orders -> Update Order Status (Admin)`**: Uses `{{adminToken}}` to transition `{{orderNumber}}` (e.g. to `SHIPPED`).
    - Run **`5. User Profile -> Get Authenticated User Profile`**: Resolves `{{userToken}}` and inspects claims and Keycloak realm roles.
-   - Run **`6. Spring Batch Pipeline -> Trigger Full Batch Pipeline`**: Launches the streaming batch pipeline and automatically captures `{{jobExecutionId}}`.
-   - Run **`6. Spring Batch Pipeline -> Get Batch Job Status & Metrics`**: Directly queries `{{jobExecutionId}}` metrics.
+   - Run **`6. Spring Batch Pipeline -> Import Products CSV (500 items/chunk)`**: Streams CSV into DB in chunks of 500 (`importProductsJob`) and captures `{{jobExecutionId}}`.
+   - Run **`6. Spring Batch Pipeline -> Trigger Full Batch Pipeline`**: Launches the full two-step pipeline (CSV &rarr; DB &rarr; JSON) and captures `{{jobExecutionId}}`.
+   - Run **`6. Spring Batch Pipeline -> Get Batch Job Status & Metrics`**: Directly queries `{{jobExecutionId}}` metrics and commit counts.
+   - Run **`6. Spring Batch Pipeline -> Download Exported JSON Output`**: Downloads the generated JSON stream via file path or `{{jobExecutionId}}`.
 
 ---
 

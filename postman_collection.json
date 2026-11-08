@@ -50,6 +50,16 @@
       "key": "bearerToken",
       "value": "",
       "type": "string"
+    },
+    {
+      "key": "inputCsvPath",
+      "value": "data/products_10k.csv",
+      "type": "string"
+    },
+    {
+      "key": "outputJsonPath",
+      "value": "data/exported_products.json",
+      "type": "string"
     }
   ],
   "item": [
@@ -822,12 +832,61 @@
       "name": "6. Spring Batch Pipeline",
       "item": [
         {
+          "name": "Import Products CSV (500 items/chunk)",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/batch/import?inputCsvPath={{inputCsvPath}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "batch",
+                "import"
+              ],
+              "query": [
+                {
+                  "key": "inputCsvPath",
+                  "value": "{{inputCsvPath}}"
+                }
+              ]
+            },
+            "description": "Triggers the dedicated CSV import batch job (importProductsJob) to stream products from CSV into PostgreSQL in chunks of 500 items via JdbcBatchItemWriter. Automatically captures {{jobExecutionId}}."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "var jsonData = pm.response.json();",
+                  "if (jsonData.jobExecutionId) {",
+                  "    pm.environment.set(\"jobExecutionId\", jsonData.jobExecutionId.toString());",
+                  "    pm.collectionVariables.set(\"jobExecutionId\", jsonData.jobExecutionId.toString());",
+                  "    pm.test(\"Import Job launched and {{jobExecutionId}} saved: \" + jsonData.jobExecutionId, function () {",
+                  "        pm.expect(jsonData.jobExecutionId).to.be.a(\"number\");",
+                  "        pm.expect(jsonData.status).to.be.oneOf([\"STARTING\", \"STARTED\", \"COMPLETED\"]);",
+                  "        pm.expect(jsonData.chunkSize).to.eql(500);",
+                  "    });",
+                  "} else {",
+                  "    pm.test(\"Failed to launch import batch job\", function () {",
+                  "        pm.expect.fail(\"No jobExecutionId found in response\");",
+                  "    });",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
           "name": "Trigger Full Batch Pipeline (CSV -> DB -> JSON)",
           "request": {
             "method": "POST",
             "header": [],
             "url": {
-              "raw": "{{baseUrl}}/api/batch/run?inputCsvPath=data/products_large.csv&outputJsonPath=data/exported_products.json",
+              "raw": "{{baseUrl}}/api/batch/run?inputCsvPath={{inputCsvPath}}&outputJsonPath={{outputJsonPath}}",
               "host": [
                 "{{baseUrl}}"
               ],
@@ -839,17 +898,16 @@
               "query": [
                 {
                   "key": "inputCsvPath",
-                  "value": "data/products_large.csv"
+                  "value": "{{inputCsvPath}}"
                 },
                 {
                   "key": "outputJsonPath",
-                  "value": "data/exported_products.json"
+                  "value": "{{outputJsonPath}}"
                 }
               ]
             },
-            "description": "Triggers the two-step chunked batch job: (1) Streams large CSV into PostgreSQL in chunks of 50, then (2) Streams database records into JSON."
+            "description": "Triggers the two-step chunked batch job: (1) Streams large CSV into PostgreSQL in chunks of 500 via JdbcBatchItemWriter, then (2) Streams database records into JSON via ProductJsonStreamWriter. Automatically captures {{jobExecutionId}}."
           },
-          "description": "Triggers the two-step chunked batch job: (1) Streams large CSV into PostgreSQL using JDBC Batch Item Writer (50 items/chunk), then (2) Streams database records into JSON using JDBC Cursor Item Reader. Automatically captures {{jobExecutionId}}.",
           "event": [
             {
               "listen": "test",
@@ -863,6 +921,7 @@
                   "    pm.test(\"Batch Job launched and {{jobExecutionId}} saved: \" + jsonData.jobExecutionId, function () {",
                   "        pm.expect(jsonData.jobExecutionId).to.be.a(\"number\");",
                   "        pm.expect(jsonData.status).to.be.oneOf([\"STARTING\", \"STARTED\", \"COMPLETED\"]);",
+                  "        pm.expect(jsonData.chunkSize).to.eql(500);",
                   "    });",
                   "} else {",
                   "    pm.test(\"Failed to launch batch job\", function () {",
@@ -891,12 +950,13 @@
                 "{{jobExecutionId}}"
               ]
             },
-            "description": "Inspects execution status, chunk commit counts, items read, and items written for {{jobExecutionId}}."
+            "description": "Inspects execution status, chunk commit counts, items read, and items written for {{jobExecutionId}} directly from JobRepository metadata."
           },
           "event": [
             {
               "listen": "test",
               "script": {
+                "type": "text/javascript",
                 "exec": [
                   "var jsonData = pm.response.json();",
                   "pm.test(\"Batch Job Status retrieved\", function () {",
@@ -907,14 +967,130 @@
                   "        pm.expect(jsonData.stepExecutions).to.be.an(\"object\");",
                   "    });",
                   "}"
-                ],
-                "type": "text/javascript"
+                ]
               }
             }
           ]
         },
         {
-          "name": "Generate Large Sample CSV (2,000 items)",
+          "name": "Download Exported JSON Output (by File Path)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/batch/download?filePath={{outputJsonPath}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "batch",
+                "download"
+              ],
+              "query": [
+                {
+                  "key": "filePath",
+                  "value": "{{outputJsonPath}}"
+                }
+              ]
+            },
+            "description": "Downloads the JSON artifact generated by ProductJsonStreamWriter via FileSystemResource. Enforces path traversal protection strictly within the data/ directory."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200 OK\", function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "pm.test(\"Content-Disposition attachment header present\", function () {",
+                  "    pm.expect(pm.response.headers.get(\"Content-Disposition\")).to.include(\"attachment; filename=\");",
+                  "});",
+                  "pm.test(\"Content-Type is application/json\", function () {",
+                  "    pm.expect(pm.response.headers.get(\"Content-Type\")).to.include(\"application/json\");",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Download Exported JSON Output (by Job Execution ID)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/batch/download?jobExecutionId={{jobExecutionId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "batch",
+                "download"
+              ],
+              "query": [
+                {
+                  "key": "jobExecutionId",
+                  "value": "{{jobExecutionId}}"
+                }
+              ]
+            },
+            "description": "Downloads the exported JSON file by resolving the outputJsonPath parameter directly from JobRepository using {{jobExecutionId}}."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200 OK\", function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "pm.test(\"Content-Disposition attachment header present\", function () {",
+                  "    pm.expect(pm.response.headers.get(\"Content-Disposition\")).to.include(\"attachment; filename=\");",
+                  "});",
+                  "pm.test(\"Content-Type is application/json\", function () {",
+                  "    pm.expect(pm.response.headers.get(\"Content-Type\")).to.include(\"application/json\");",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Generate Large Sample CSV (10,000 items)",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/batch/generate-sample-csv?totalRows=10000&filePath={{inputCsvPath}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "batch",
+                "generate-sample-csv"
+              ],
+              "query": [
+                {
+                  "key": "totalRows",
+                  "value": "10000"
+                },
+                {
+                  "key": "filePath",
+                  "value": "{{inputCsvPath}}"
+                }
+              ]
+            },
+            "description": "Generates the standard 10,000 item product CSV dataset (data/products_10k.csv) for high-throughput chunking benchmarks (20 chunks of 500)."
+          }
+        },
+        {
+          "name": "Generate Sample CSV (2,000 items)",
           "request": {
             "method": "POST",
             "header": [],
@@ -939,7 +1115,7 @@
                 }
               ]
             },
-            "description": "Generates a realistic large product dataset on disk for testing chunking."
+            "description": "Generates a 2,000 item sample product CSV dataset (data/products_large.csv) for quick testing (4 chunks of 500)."
           }
         }
       ]
